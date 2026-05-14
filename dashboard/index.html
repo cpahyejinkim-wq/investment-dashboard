@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KAP Dashboard v2.1</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">KAP <span class="ver">v2.1</span></div>
+  <div class="topbar-stats">
+    <div><span class="lbl">날짜</span><span id="data-as-of">—</span></div>
+    <div><span class="lbl">Regime</span><span id="regime-state" class="regime-pill">—</span></div>
+    <div><span class="lbl">권장 Mode</span><span id="recommended-mode">—</span></div>
+    <div><span class="lbl">KOSPI</span><span id="kospi-close">—</span></div>
+    <div><span class="lbl">VKOSPI</span><span id="vkospi">—</span></div>
+  </div>
+  <div class="mode-toggle">
+    <button data-mode="sprint" class="active">Sprint</button>
+    <button data-mode="marathon">Marathon</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <div class="filter-box">
+      <h3>필터</h3>
+      <label><span>Tier</span>
+        <select id="filter-tier">
+          <option value="">전체</option>
+          <option value="S">S</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+        </select>
+      </label>
+      <label><span>섹터</span>
+        <select id="filter-sector"><option value="">전체</option></select>
+      </label>
+      <label><span>시장</span>
+        <select id="filter-market">
+          <option value="">전체</option>
+          <option value="KOSPI">KOSPI</option>
+          <option value="KOSDAQ">KOSDAQ</option>
+        </select>
+      </label>
+    </div>
+    <div class="universe-box">
+      <h3>Universe</h3>
+      <p>크기: <strong id="universe-size">—</strong></p>
+      <p>S Tier: <strong id="kpi-s">—</strong></p>
+      <p>A Tier: <strong id="kpi-a">—</strong></p>
+      <p>B Tier: <strong id="kpi-b">—</strong></p>
+    </div>
+  </aside>
+
+  <section class="content">
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">현재 Mode</div>
+        <div class="kpi-value" id="kpi-current-mode">Sprint</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">신규 진입 허용</div>
+        <div class="kpi-value" id="kpi-entry-allowed">—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">비중 배수</div>
+        <div class="kpi-value" id="kpi-weight-mult">—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Breadth (>MA20)</div>
+        <div class="kpi-value" id="kpi-breadth">—</div>
+      </div>
+    </div>
+
+    <div class="row-3">
+      <div class="card" id="regime-widget">
+        <h3>Regime Gauge</h3>
+        <div class="gauge">
+          <div class="gauge-score" id="regime-score">—</div>
+          <div class="gauge-subscores">
+            <span>Trend <b id="ss-trend">—</b></span>
+            <span>Breadth <b id="ss-breadth">—</b></span>
+            <span>Volatility <b id="ss-volatility">—</b></span>
+          </div>
+        </div>
+        <p class="hint" id="mode-recommendation">—</p>
+      </div>
+      <div class="card" id="pyramid">
+        <h3>Pyramid</h3>
+        <div class="pyramid">
+          <div class="tier-row s"><span>S</span><div class="bar"><span id="bar-s"></span></div><b id="cnt-s">0</b></div>
+          <div class="tier-row a"><span>A</span><div class="bar"><span id="bar-a"></span></div><b id="cnt-a">0</b></div>
+          <div class="tier-row b"><span>B</span><div class="bar"><span id="bar-b"></span></div><b id="cnt-b">0</b></div>
+          <div class="tier-row c"><span>C</span><div class="bar"><span id="bar-c"></span></div><b id="cnt-c">0</b></div>
+        </div>
+      </div>
+      <div class="card" id="mode-compare">
+        <h3>Mode Comparison (Top 10)</h3>
+        <div class="cmp-cols">
+          <div><h4>Sprint</h4><ol id="cmp-sprint"></ol></div>
+          <div><h4>Marathon</h4><ol id="cmp-marathon"></ol></div>
+        </div>
+        <p class="hint">교집합: <b id="cmp-overlap">—</b></p>
+      </div>
+    </div>
+
+    <div class="card" id="leaderboard-card">
+      <h3>Leaderboard (<span id="lb-mode">Sprint</span>)</h3>
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th>#</th><th>Ticker</th><th>이름</th><th>섹터</th><th>Tier</th>
+            <th>Score</th><th>Leader</th><th>RankVel</th><th>Accel</th>
+            <th>RS20</th><th>RS60</th><th>Weight</th><th>Stop</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+
+    <div class="row-2">
+      <div class="card" id="new-leaders-card">
+        <h3>New Leaders (Rank Velocity)</h3>
+        <table>
+          <thead><tr><th>Ticker</th><th>이름</th><th>섹터</th><th>RankVel</th><th>Accel</th><th>Tier 변경</th></tr></thead>
+          <tbody id="new-leaders-body"></tbody>
+        </table>
+      </div>
+      <div class="card" id="sector-card">
+        <h3>섹터 요약</h3>
+        <table>
+          <thead><tr><th>섹터</th><th>종목수</th><th>S+A</th><th>평균 점수</th><th>비중합</th></tr></thead>
+          <tbody id="sector-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="risk-card">
+      <h3>Risk Alerts</h3>
+      <div id="risk-body" class="risk-empty">현재 트리거된 손절 없음.</div>
+    </div>
+  </section>
+</main>
+
+<footer><p>KAP v2.1 — KOSPI Audition Pyramid Dashboard. 데이터 갱신: <span id="footer-as-of">—</span></p></footer>
+
+<script src="app.js"></script>
+</body>
+</html>
