@@ -133,6 +133,22 @@ def test_regime_blocks_entry_when_risk_off() -> None:
     assert config.REGIME["allowed_tiers_map"][state] == []
 
 
+def test_universe_filter_passes_when_market_cap_is_nan() -> None:
+    """FDR per-ticker history doesn't include market cap. The universe filter
+    must treat NaN as 'unknown' rather than 'too small' so FDR-only runs work.
+    """
+    rows: list[dict[str, object]] = []
+    for d in pd.date_range("2025-01-01", periods=130):
+        rows.append({
+            "ticker": "T1", "date": d.date(), "market": "KOSPI",
+            "open": 50_000.0, "high": 51_000.0, "low": 49_000.0, "close": 50_500.0,
+            "volume": 1_000_000, "trade_value": 50_500_000_000.0,
+            "market_cap": float("nan"), "shares": float("nan"),
+        })
+    snap = universe.build_universe(pd.DataFrame(rows))
+    assert int(snap["included"].sum()) == 1
+
+
 def test_stops_are_mode_aware() -> None:
     df = pd.DataFrame(
         {

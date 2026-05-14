@@ -87,7 +87,7 @@ def fetch_ohlcv_fast(
         logger.error("FDR StockListing failed: {}", exc)
         return cached if not cached.empty else _synthetic_ohlcv(window)
 
-    universe: list[tuple[str, str]] = _build_universe(kospi_list, kosdaq_list)
+    universe, cap_map = _build_universe(kospi_list, kosdaq_list)
     logger.info(
         "fdr universe: {} tickers (KOSPI + KOSDAQ). fetching with {} threads...",
         len(universe),
@@ -111,8 +111,9 @@ def fetch_ohlcv_fast(
         df["trade_value"] = (df["close"] * df["volume"]).astype(float)
         df["ticker"] = tk
         df["market"] = market
-        df["market_cap"] = np.nan
-        df["shares"] = np.nan
+        mcap, shares = cap_map.get(tk, (np.nan, np.nan))
+        df["market_cap"] = mcap if mcap is not None else np.nan
+        df["shares"] = shares if shares is not None else np.nan
         df.index.name = "date"
         df = df.reset_index()
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -146,18 +147,19 @@ def fetch_ohlcv_fast(
 
 def _build_universe(
     kospi_list: pd.DataFrame, kosdaq_list: pd.DataFrame
-) -> list[tuple[str, str]]:
-    """Extract (ticker, market) pairs from FDR StockListing frames.
+) -> tuple[list[tuple[str, str]], dict[str, tuple[float | None, float | None]]]:
+    """Return ((ticker, market) list, market_cap+shares map).
 
-    Column naming differs across FDR versions: ``Code`` (older) vs ``Symbol``
-    (newer). We tolerate both. Filters out ETFs / preferred shares by simple
-    name suffix heuristics so the universe size stays manageable.
+    FDR StockListing column names vary across versions:
+      - ticker:  Code  | Symbol
+      - cap:     Marcap | MarCap | MarketCap
+      - shares:  Stocks | Shares
     """
-    def _col(df: pd.DataFrame) -> str:
-        for c in ("Code", "Symbol"):
+    def _first(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+        for c in candidates:
             if c in df.columns:
                 return c
-        raise KeyError(f"neither Code nor Symbol in FDR listing columns: {df.columns.tolist()}")
+        return None
 
     def _passes(name: str) -> bool:
         if not isinstance(name, str):
@@ -167,15 +169,29 @@ def _build_universe(
         return True
 
     out: list[tuple[str, str]] = []
+    cap_map: dict[str, tuple[float | None, float | None]] = {}
+
     for df, mk in ((kospi_list, "KOSPI"), (kosdaq_list, "KOSDAQ")):
-        code_col = _col(df)
-        name_col = "Name" if "Name" in df.columns else None
+        code_col = _first(df, ("Code", "Symbol"))
+        if code_col is None:
+            logger.warning("FDR listing missing Code/Symbol column: {}", df.columns.tolist())
+            continue
+        name_col = _first(df, ("Name",))
+        cap_col = _first(df, ("Marcap", "MarCap", "MarketCap"))
+        shares_col = _first(df, ("Stocks", "Shares"))
+
         for _, r in df.iterrows():
             tk = str(r[code_col]).zfill(6)
             if name_col and not _passes(str(r[name_col])):
                 continue
+            mcap = float(r[cap_col]) if cap_col and pd.notna(r[cap_col]) else None
+            shares = float(r[shares_col]) if shares_col and pd.notna(r[shares_col]) else None
             out.append((tk, mk))
-    return out
+            cap_map[tk] = (mcap, shares)
+
+    if not any(v[0] is not None for v in cap_map.values()):
+        logger.warning("FDR StockListing did not provide market cap - universe filter will use trade_value only")
+    return out, cap_map
 
 
 def fetch_index_ohlcv(window: CollectionWindow) -> pd.DataFrame:

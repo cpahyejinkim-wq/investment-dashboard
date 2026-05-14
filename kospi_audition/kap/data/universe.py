@@ -30,7 +30,11 @@ def build_universe(ohlcv: pd.DataFrame) -> pd.DataFrame:
         trade_value_20d = float(g["trade_value"].tail(20).mean())
         listing_days = int(g["date"].nunique())
         market = str(last["market"])
-        market_cap = float(last["market_cap"]) if pd.notna(last["market_cap"]) else 0.0
+        # Keep market_cap as NaN if missing - the filter treats unknown as
+        # "info absent" rather than "fails the cap test".
+        market_cap = (
+            float(last["market_cap"]) if pd.notna(last["market_cap"]) else float("nan")
+        )
         rows.append(
             {
                 "ticker": ticker,
@@ -58,7 +62,10 @@ def _passes_filter(row: pd.Series) -> bool:
     min_cap = (
         cfg["min_market_cap_kospi"] if row["market"] == "KOSPI" else cfg["min_market_cap_kosdaq"]
     )
-    if row["market_cap"] < min_cap:
+    # Only reject on market cap when we actually KNOW it. NaN means data
+    # provider didn't include it (e.g. FDR per-ticker history); let it through
+    # so subsequent liquidity / price / listing checks decide.
+    if pd.notna(row["market_cap"]) and row["market_cap"] < min_cap:
         return False
     if row["trade_value_20d"] < cfg["min_trade_value_20d"]:
         return False

@@ -122,6 +122,19 @@ def _build_ranking(
     regime_multiplier: float,
     allowed_tiers: list[str],
 ) -> pd.DataFrame:
+    if scored.empty or "ticker" not in scored.columns:
+        logger.warning(
+            "mode={}: scored frame empty (factors had no data) - returning empty ranking",
+            mode,
+        )
+        return pd.DataFrame(
+            columns=[
+                "ticker", "mode", "tier", "mode_score", "mode_score_pct",
+                "weight", "weight_target", "market", "current_price",
+                "stop_loss", "trailing_stop", "time_stop_days", "sector",
+                "entry_signal", "entry_signal_date",
+            ]
+        )
     tiered = tier_mod.assign_tiers(scored, mode=mode, score_pct_col=score_pct_col)
     tiered = tier_mod.assign_weights(
         tiered,
