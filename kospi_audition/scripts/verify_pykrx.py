@@ -45,11 +45,28 @@ def _last_business_day(today: _dt.date) -> _dt.date:
     return d
 
 
+def _resolve_target(now: _dt.datetime) -> _dt.date:
+    """Return the most recent date KRX is expected to have published.
+
+    KRX publishes the day's close after 15:30 KST. Before that (and on
+    weekends), the latest *available* date is yesterday's business day —
+    asking pykrx for today returns empty JSON and trips the verifier.
+    """
+    today = now.date()
+    if now.weekday() < 5 and now.time() >= MARKET_CLOSE:
+        return today
+    # Step back to yesterday and roll over weekends.
+    d = today - _dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= _dt.timedelta(days=1)
+    return d
+
+
 def _warn_if_before_close(now: _dt.datetime) -> None:
     if now.weekday() < 5 and now.time() < MARKET_CLOSE:
         logger.warning(
-            "Now is {} KST (before 15:30 close) - today's close may not be published yet. "
-            "Re-run after 15:35 KST for guaranteed end-of-day data.",
+            "Now is {} KST (before 15:30 close) - today's close not published yet. "
+            "Verifier will use the previous business day instead.",
             now.strftime("%H:%M"),
         )
 
@@ -145,7 +162,7 @@ def main() -> None:
     configure_logging(os.environ.get("KAP_LOG_LEVEL", "INFO"))
     now = _today_kst()
     _warn_if_before_close(now)
-    target = _last_business_day(now.date())
+    target = _resolve_target(now)
     logger.info("=== pykrx live verification ===  target_date={}", target)
 
     stock = step1_import_pykrx()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import time
+import zoneinfo
 
 import pandas as pd
 from loguru import logger
@@ -177,7 +178,7 @@ def main() -> None:
     started = time.time()
     logger.info("=== Stage 1+2 run started ===")
 
-    end = _dt.date.today()
+    end = _resolve_end_date()
     start = end - _dt.timedelta(days=args.days)
     win = collector.CollectionWindow(start=start, end=end)
 
@@ -362,6 +363,26 @@ def main() -> None:
 _retry_collect_ohlcv = retry(attempts=3, initial_delay=2.0)(collector.fetch_ohlcv)
 _retry_collect_ohlcv_fast = retry(attempts=3, initial_delay=2.0)(collector.fetch_ohlcv_fast)
 _retry_collect_index = retry(attempts=3, initial_delay=2.0)(collector.fetch_index_ohlcv)
+
+
+_KST = zoneinfo.ZoneInfo("Asia/Seoul")
+_MARKET_CLOSE = _dt.time(15, 30)
+
+
+def _resolve_end_date() -> _dt.date:
+    """Latest date for which KRX should have published a close.
+
+    Before 15:30 KST (or on weekends) "today" returns empty JSON from KRX, so
+    we step back to the most recent business day with published data.
+    """
+    now = _dt.datetime.now(tz=_KST)
+    today = now.date()
+    if now.weekday() < 5 and now.time() >= _MARKET_CLOSE:
+        return today
+    d = today - _dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= _dt.timedelta(days=1)
+    return d
 
 
 if __name__ == "__main__":
