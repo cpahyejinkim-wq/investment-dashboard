@@ -40,11 +40,36 @@ If `pykrx` cannot reach KRX (CI / sandbox), the collector emits deterministic
 synthetic data so the rest of the pipeline still produces valid JSON. The log
 clearly warns when synthetic data is being used.
 
+## Stage 2 scope (implemented)
+
+| Stage 2 deliverable | Status |
+| --- | --- |
+| Volume Score (TV spread / Up-Down volume / OBV slope) | done |
+| Flow Score (외국인 / 기관 누적 순매수 percentile) | done (synthetic flow until pykrx flow wired) |
+| Marathon Mode score + tier caps + base weights | done |
+| Marathon Hard / Trailing / Time Stop (-10%/-12%, ATR×2.5, 30D) | done |
+| Mode Toggle UI Sprint ↔ Marathon (regime recommendation pre-selects) | done |
+| Mode Comparison widget (Top 10 intersection + health band) | done |
+| Soft Migration position book (positions.json, entry-mode rules preserved) | done |
+| Entry signals: Breakout / VCP / Pullback | done |
+| Sector Cap (30%/25%) + Correlation Cluster (60D ≥ 0.80) | done |
+| Stage 2 unit tests (10 additional) | passing |
+
+## Outputs
+
+```
+output/
+├── regime_data.json
+├── ranking_sprint.json
+├── ranking_marathon.json
+├── mode_compare.json     # Stage 2 - Sprint vs Marathon Top 10 분기
+├── risk_alerts.json
+├── new_leaders.json
+└── positions.json        # Stage 2 - Soft Migration position book + events
+```
+
 ## Next stages (per PRD §13)
 
-- Stage 2: Volume / Flow scores, Marathon mode, Mode Comparison widget, Soft
-  Migration, Entry Signals (Breakout / VCP / Pullback), Sector Cap +
-  Correlation Cluster.
 - Stage 3: DART fundamentals, Quality Gate, Earnings Drift, Sector Power Score,
-  Leader Score, Walk-Forward backtest.
+  Leader Score, Volatility-Adjusted Weight, Walk-Forward backtest.
 - Stage 4: Scheduler, Slack/Email alerts, Paper Trading hand-off.

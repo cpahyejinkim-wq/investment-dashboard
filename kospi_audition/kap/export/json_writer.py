@@ -62,3 +62,18 @@ def write_risk_alerts(alerts: list[dict[str, Any]], as_of: str) -> Path:
 def write_new_leaders(leaders: pd.DataFrame, as_of: str) -> Path:
     rows = [_row_to_dict(r) for _, r in leaders.iterrows()] if not leaders.empty else []
     return write_json({"as_of": as_of, "new_leaders": rows}, "new_leaders.json")
+
+
+def write_mode_compare(payload: dict[str, Any], as_of: str) -> Path:
+    return write_json({**payload, "as_of": as_of}, "mode_compare.json")
+
+
+def write_positions(book: dict[str, dict[str, Any]], events: list[dict[str, Any]], as_of: str) -> Path:
+    return write_json(
+        {
+            "as_of": as_of,
+            "positions": list(book.values()),
+            "events": events,
+        },
+        "positions.json",
+    )

@@ -37,5 +37,9 @@ td:nth-child(1), td:nth-child(2), td:nth-child(3), td:nth-child(4) { text-align:
 .tier-B { color: #6dc7ff; }
 .tier-C { color: #8d94a8; }
 .tier-D { color: #4f5364; }
+.migration-banner {
+  background: #2a2417; color: #ffc14d; border-left: 3px solid #d8a52d;
+  padding: 8px 12px; border-radius: 4px; font-size: 13px;
+}
 #risk-alerts { list-style: none; padding-left: 0; }
 #risk-alerts li { padding: 6px 8px; border-left: 3px solid #ff6584; margin-bottom: 6px; background: rgba(255,101,132,0.07); border-radius: 0 4px 4px 0; font-size: 13px; }
