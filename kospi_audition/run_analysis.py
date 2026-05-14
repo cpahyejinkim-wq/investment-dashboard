@@ -205,6 +205,15 @@ def main() -> None:
     if ohlcv.empty:
         logger.error("no OHLCV - aborting")
         return
+    actual_last = max(ohlcv["date"])
+    if actual_last != end:
+        logger.warning(
+            "as_of resolved to {} (vs system hint {}). "
+            "The pipeline will operate on the most-recent date that has real data.",
+            actual_last, end,
+        )
+    else:
+        logger.info("as_of = {} (system hint matched real data)", actual_last)
     collector.save_parquet(ohlcv, "ohlcv")
     collector.save_parquet(index_df, "index_ohlcv")
 
