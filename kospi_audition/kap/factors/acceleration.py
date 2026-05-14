@@ -58,9 +58,11 @@ def compute_acceleration(ohlcv: pd.DataFrame, benchmark: pd.Series) -> pd.DataFr
     tv_short = trade_value.tail(short).mean()
     tv_long = trade_value.tail(long).mean()
     safe_long = tv_long.replace(0.0, np.nan)
-    vol_accel = np.log((tv_short / safe_long).replace([np.inf, -np.inf], np.nan)).rename(
-        "volume_acceleration"
-    )
+    ratio = (tv_short / safe_long).replace([np.inf, -np.inf], np.nan)
+    # log(0) is -inf which throws RuntimeWarning; mask zeros first.
+    ratio = ratio.where(ratio > 0, other=np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vol_accel = np.log(ratio).rename("volume_acceleration")
 
     out = pd.concat([rs_accel, vol_accel], axis=1).reset_index().rename(columns={"index": "ticker"})
     if "ticker" not in out.columns:

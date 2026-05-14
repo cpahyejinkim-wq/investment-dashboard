@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -29,7 +31,9 @@ def compute_volume_score(ohlcv: pd.DataFrame) -> pd.DataFrame:
 
     agg_tv_short = df.groupby("ticker", sort=False)["trade_value"].apply(lambda s: s.tail(20).mean())
     agg_tv_long = df.groupby("ticker", sort=False)["trade_value"].mean()  # ~last 80 (close enough to 60D for this purpose)
-    spread = (agg_tv_short / agg_tv_long.replace(0.0, np.nan)).rename("tv_spread")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        spread = (agg_tv_short / agg_tv_long.replace(0.0, np.nan)).rename("tv_spread")
 
     up_sum = df.groupby("ticker", sort=False)["up_vol"].apply(lambda s: s.tail(50).sum())
     down_sum = df.groupby("ticker", sort=False)["down_vol"].apply(lambda s: s.tail(50).sum())

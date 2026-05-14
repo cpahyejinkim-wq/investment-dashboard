@@ -31,6 +31,7 @@ import pandas as pd
 from loguru import logger
 
 from kap import config
+from kap.data.calendar import find_latest_trading_day
 from kap.data.collector import (
     CollectionWindow,
     _ensure_columns,
@@ -42,6 +43,7 @@ from kap.data.collector import (
 )
 
 FDR_MAX_WORKERS = 8
+BELLWETHER_TICKER = "005930"  # 삼성전자 - used to probe FDR's actual latest date
 
 
 def _try_import_fdr() -> object | None:
@@ -70,15 +72,35 @@ def fetch_ohlcv_fast(
     cached = _load_cache(cache_path)
 
     bdays = pd.bdate_range(window.start, window.end).date.tolist()
-    if cached.empty:
-        missing_start = window.start
-    else:
-        have = set(pd.to_datetime(cached["date"]).dt.date.unique())
-        missing_days = [d for d in bdays if d not in have]
-        if not missing_days:
-            logger.info("fdr cache hit: 0 dates to fetch")
+
+    # Probe FDR's actual latest date with a bellwether ticker (Samsung). When
+    # we run before market close (or on a holiday/weekend), the requested
+    # ``window.end`` is in the future and probing avoids burning per-ticker
+    # calls on a date FDR doesn't have.
+    actual_latest = _probe_latest_date(fdr, window.end)
+    if actual_latest is None:
+        logger.warning("FDR bellwether probe failed - falling back to cache or synthetic")
+        return cached if not cached.empty else _synthetic_ohlcv(window)
+
+    if not cached.empty:
+        cached_max = max(pd.to_datetime(cached["date"]).dt.date)
+        if cached_max >= actual_latest:
+            logger.info(
+                "fdr cache hit: cached through {} >= FDR latest {}. No fetch needed.",
+                cached_max, actual_latest,
+            )
             return _slice_window(cached, window)
-        missing_start = min(missing_days)
+        # Fetch only from the day after the cache's max date.
+        missing_start = cached_max + _dt.timedelta(days=1)
+    else:
+        missing_start = window.start
+
+    effective_end = actual_latest
+    if actual_latest < window.end:
+        logger.info(
+            "fdr probe: latest available date is {} (window end {}). Capping fetch to probed date.",
+            actual_latest, window.end,
+        )
 
     try:
         kospi_list = fdr.StockListing("KOSPI")  # type: ignore[attr-defined]
@@ -96,7 +118,7 @@ def fetch_ohlcv_fast(
 
     def _fetch_one(tk: str, market: str) -> pd.DataFrame | None:
         try:
-            df = fdr.DataReader(tk, missing_start, window.end)  # type: ignore[attr-defined]
+            df = fdr.DataReader(tk, missing_start, effective_end)  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001
             logger.debug("FDR DataReader({}): {}", tk, exc)
             return None
@@ -143,6 +165,20 @@ def fetch_ohlcv_fast(
     _ensure_columns(combined)
     save_parquet(combined, cache_name)
     return _slice_window(combined, window)
+
+
+def _probe_latest_date(fdr: object, hint: _dt.date, max_lookback: int = 10) -> _dt.date | None:
+    """Walk back from ``hint`` using Samsung as a bellwether to find FDR's latest
+    available trading day. Cheap (one ticker, one DataReader call per probe).
+    """
+    def _probe(d: _dt.date) -> bool:
+        try:
+            df = fdr.DataReader(BELLWETHER_TICKER, d, d)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            return False
+        return df is not None and not df.empty
+
+    return find_latest_trading_day(_probe, hint, max_lookback)
 
 
 def _build_universe(
@@ -199,13 +235,29 @@ def fetch_index_ohlcv(window: CollectionWindow) -> pd.DataFrame:
     if fdr is None:
         return _synthetic_index(window)
     frames: list[pd.DataFrame] = []
-    for name, code in (("KOSPI", "KS11"), ("KOSDAQ", "KQ11"), ("VKOSPI", "VKOSPI")):
-        try:
-            df = fdr.DataReader(code, window.start, window.end)  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("FDR index fetch failed for {}: {}", name, exc)
-            continue
+    # VKOSPI: FDR routes unknown symbols to Yahoo which doesn't host it.
+    # We try a couple of aliases and silently fall back to NaN — the regime
+    # filter already treats missing VKOSPI as a neutral 0 subscore.
+    index_targets: list[tuple[str, tuple[str, ...]]] = [
+        ("KOSPI", ("KS11",)),
+        ("KOSDAQ", ("KQ11",)),
+        ("VKOSPI", ("VKOSPI", "^VKOSPI", "VKOSPI.KS")),
+    ]
+    for name, codes in index_targets:
+        df: pd.DataFrame | None = None
+        for code in codes:
+            try:
+                cand = fdr.DataReader(code, window.start, window.end)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                continue
+            if cand is not None and not cand.empty:
+                df = cand
+                break
         if df is None or df.empty:
+            if name == "VKOSPI":
+                logger.info("FDR: VKOSPI not available - regime volatility subscore will be 0")
+            else:
+                logger.warning("FDR index fetch failed for {} (tried {})", name, codes)
             continue
         df = df.rename(columns={"Open": "open", "High": "high", "Low": "low",
                                 "Close": "close", "Volume": "volume"})
