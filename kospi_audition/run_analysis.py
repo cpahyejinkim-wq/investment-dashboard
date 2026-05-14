@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import os
 import time
 import zoneinfo
 
@@ -68,6 +69,13 @@ def _parse_args() -> argparse.Namespace:
                    help="Stage 4: dispatch Slack/Email alerts based on env vars")
     p.add_argument("--slow-collector", action="store_true",
                    help="Use legacy per-ticker pykrx scan instead of fast date-based path")
+    p.add_argument(
+        "--collector",
+        choices=["pykrx", "fdr"],
+        default=None,
+        help="Data source backend. Default = env KAP_COLLECTOR or 'pykrx'. "
+             "Use 'fdr' (FinanceDataReader) when pykrx is broken.",
+    )
     return p.parse_args()
 
 
@@ -182,13 +190,22 @@ def main() -> None:
     start = end - _dt.timedelta(days=args.days)
     win = collector.CollectionWindow(start=start, end=end)
 
-    collector_fn = _retry_collect_ohlcv if args.slow_collector else _retry_collect_ohlcv_fast
-    ohlcv = collector_fn(win)
+    backend = args.collector or os.environ.get("KAP_COLLECTOR", "pykrx")
+    if backend == "fdr":
+        from kap.data import fdr_collector
+        logger.info("collector backend: FinanceDataReader")
+        ohlcv = retry(attempts=3, initial_delay=2.0)(fdr_collector.fetch_ohlcv_fast)(win)
+        index_df = retry(attempts=3, initial_delay=2.0)(fdr_collector.fetch_index_ohlcv)(win)
+    else:
+        logger.info("collector backend: pykrx ({} path)",
+                    "slow" if args.slow_collector else "fast")
+        collector_fn = _retry_collect_ohlcv if args.slow_collector else _retry_collect_ohlcv_fast
+        ohlcv = collector_fn(win)
+        index_df = _retry_collect_index(win)
     if ohlcv.empty:
         logger.error("no OHLCV - aborting")
         return
     collector.save_parquet(ohlcv, "ohlcv")
-    index_df = _retry_collect_index(win)
     collector.save_parquet(index_df, "index_ohlcv")
 
     snap = universe_mod.build_universe(ohlcv)
