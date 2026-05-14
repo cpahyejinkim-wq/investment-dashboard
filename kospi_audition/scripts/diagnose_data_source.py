@@ -24,10 +24,16 @@ import socket
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
-from loguru import logger
+# Make the package importable when run from the scripts/ folder.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from kap.logging_setup import configure_logging
+from loguru import logger  # noqa: E402
+
+from kap.logging_setup import configure_logging  # noqa: E402
 
 KNOWN_GOOD_DATE = _dt.date(2024, 1, 2)  # KRX trading day, far in the past
 
@@ -69,10 +75,17 @@ def check_dns_and_egress() -> bool:
     return ok
 
 
-def check_raw_http() -> bool:
-    """Pull the KRX endpoint that pykrx uses with a plain urllib request."""
+def check_raw_http() -> tuple[bool, bool]:
+    """Probe the KRX endpoint that pykrx uses with a plain urllib request.
+
+    Returns (reachable, body_ok):
+      - reachable: TCP+TLS+HTTP got *any* response (including 403).
+      - body_ok:   response body looked like real JSON.
+    Distinguishing 403 (안티봇/헤더 부족) vs unreachable (방화벽) matters for
+    the recommendation.
+    """
     logger.info("=== Step 3: raw HTTPS to KRX endpoint pykrx uses ===")
-    url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
     body = (
         "bld=dbms/MDC/STAT/standard/MDCSTAT01901&locale=ko_KR&mktId=STK&"
         "trdDd=" + KNOWN_GOOD_DATE.strftime("%Y%m%d") + "&share=1&money=1&csvxls_isNo=false"
@@ -81,22 +94,36 @@ def check_raw_http() -> bool:
         url,
         data=body,
         headers={
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/javascript, */*; q=0.01",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Referer": "https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd",
+            "Origin": "https://data.krx.co.kr",
+            "X-Requested-With": "XMLHttpRequest",
         },
     )
     try:
         resp = urllib.request.urlopen(req, timeout=15)
         raw = resp.read()
+        status = resp.status
+    except urllib.error.HTTPError as exc:
+        logger.error(
+            "  KRX endpoint reachable but rejected with HTTP {} ({}). "
+            "이건 네트워크 차단이 아니라 KRX 의 anti-bot 가드입니다.", exc.code, exc.reason
+        )
+        return True, False
     except urllib.error.URLError as exc:
-        logger.error("  KRX endpoint unreachable: {}", exc)
-        return False
+        logger.error("  KRX endpoint unreachable: {} - 방화벽/프록시/VPN 의심", exc)
+        return False, False
     if not raw or len(raw.strip()) < 2:
-        logger.error("  KRX endpoint returned empty body ({} bytes) - 안티봇 또는 endpoint deprecation 의심", len(raw))
-        return False
+        logger.error("  KRX endpoint returned empty body (HTTP {} {} bytes)", status, len(raw))
+        return True, False
     snippet = raw[:120].decode("utf-8", errors="replace").replace("\n", " ")
-    logger.info("  KRX endpoint OK: {} bytes. preview: {}...", len(raw), snippet)
-    return True
+    logger.info("  KRX endpoint OK (HTTP {}): {} bytes. preview: {}...", status, len(raw), snippet)
+    return True, True
 
 
 def check_pykrx() -> bool:
@@ -142,32 +169,44 @@ def check_finance_data_reader() -> bool:
     return True
 
 
-def recommend(network_ok: bool, raw_ok: bool, pykrx_ok: bool, fdr_ok: bool) -> None:
+def recommend(
+    network_ok: bool,
+    raw_reachable: bool,
+    raw_body_ok: bool,
+    pykrx_ok: bool,
+    fdr_ok: bool,
+) -> None:
     logger.info("=== Recommendation ===")
     if pykrx_ok:
-        logger.info("  ✅ pykrx 가 정상 동작합니다. verify_pykrx.py 가 실패한 건 일시적 이슈일 수 있습니다. 재시도해보세요.")
-        return
-    if not network_ok or not raw_ok:
-        logger.error("  ❌ KRX 자체에 접속이 안 됩니다. (방화벽 / 사내 프록시 / VPN 의심)")
-        logger.error("     - 회사 네트워크라면 IT 담당자에게 data.krx.co.kr 허용 요청")
-        logger.error("     - 개인 네트워크라면 백신/방화벽 일시 해제 후 재시도")
+        logger.info("  ✅ pykrx 정상. verify_pykrx.py 가 실패한 건 일시적 이슈일 수 있습니다. 재시도해보세요.")
         return
     if fdr_ok:
-        logger.warning("  ⚠ pykrx 는 깨졌지만 FinanceDataReader 는 정상. FDR 기반 collector 로 전환을 권장합니다.")
-        logger.warning("     - 추후 추가될 `--collector fdr` 옵션이 활성화되면 그것을 사용")
-        logger.warning("     - 또는 pip install -U pykrx 한 번 더 시도")
+        logger.warning("  ⚠ pykrx 는 깨졌지만 FinanceDataReader 는 정상 — 운영은 FDR 로 진행하세요.")
+        logger.warning("     실행:  python run_analysis.py --collector fdr")
+        logger.warning("     또는:  set KAP_COLLECTOR=fdr  (Windows)  &&  python run_analysis.py")
         return
-    logger.error("  ❌ 어떤 데이터 소스도 동작하지 않습니다. 네트워크/방화벽 문제일 가능성이 매우 큽니다.")
+    if not network_ok:
+        logger.error("  ❌ KRX 호스트에 TCP 연결 자체가 안 됩니다. (방화벽 / VPN / DNS 의심)")
+        return
+    if raw_reachable and not raw_body_ok:
+        logger.error("  ❌ KRX 에 닿긴 하지만 HTTP 레벨에서 거부당함 (anti-bot 가드).")
+        logger.error("     - pykrx 최신 버전으로 업그레이드: pip install -U pykrx")
+        logger.error("     - 그래도 안 되면 FDR 사용: pip install finance-datareader && python run_analysis.py --collector fdr")
+        return
+    logger.error("  ❌ 어떤 데이터 소스도 동작하지 않습니다. 네트워크/방화벽 문제일 가능성이 큽니다.")
 
 
 def main() -> int:
     configure_logging("INFO")
     check_versions()
     net = check_dns_and_egress()
-    raw = check_raw_http() if net else False
+    if net:
+        raw_reachable, raw_body_ok = check_raw_http()
+    else:
+        raw_reachable, raw_body_ok = False, False
     pkx = check_pykrx() if net else False
     fdr = check_finance_data_reader() if net else False
-    recommend(net, raw, pkx, fdr)
+    recommend(net, raw_reachable, raw_body_ok, pkx, fdr)
     return 0 if pkx or fdr else 1
 
 
