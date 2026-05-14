@@ -37,6 +37,10 @@ from kap.factors import earnings as earnings_mod
 from kap.factors import quality as quality_mod
 from kap.modes import marathon as marathon_mode
 from kap.modes import sprint as sprint_mode
+from kap.ops import notify as notify_mod
+from kap.ops import paper_trading as paper_mod
+from kap.ops import regime_history as hist_mod
+from kap.ops.retry import retry
 from kap.portfolio import positions as positions_mod
 from kap.portfolio import vol_weight as vol_weight_mod
 from kap.ranking import leader_score as leader_mod
@@ -57,6 +61,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Also run Stage 3 backtest (slow)")
     p.add_argument("--with-walk-forward", action="store_true",
                    help="Also run Stage 3 walk-forward harness (very slow)")
+    p.add_argument("--paper-trading", action="store_true",
+                   help="Stage 4: update paper-trading state (output/paper_trading.json)")
+    p.add_argument("--notify", action="store_true",
+                   help="Stage 4: dispatch Slack/Email alerts based on env vars")
     return p.parse_args()
 
 
@@ -171,12 +179,12 @@ def main() -> None:
     start = end - _dt.timedelta(days=args.days)
     win = collector.CollectionWindow(start=start, end=end)
 
-    ohlcv = collector.fetch_ohlcv(win)
+    ohlcv = _retry_collect_ohlcv(win)
     if ohlcv.empty:
         logger.error("no OHLCV - aborting")
         return
     collector.save_parquet(ohlcv, "ohlcv")
-    index_df = collector.fetch_index_ohlcv(win)
+    index_df = _retry_collect_index(win)
     collector.save_parquet(index_df, "index_ohlcv")
 
     snap = universe_mod.build_universe(ohlcv)
@@ -314,6 +322,42 @@ def main() -> None:
         logger.info("backtest written ({} strategies)", len(results))
 
     logger.info("=== Stage 1+2+3 done in {:.1f}s ===", time.time() - started)
+
+    # ---- Stage 4: paper trading + notifications + history ----------------
+    if args.paper_trading:
+        state = paper_mod.load_state()
+        state = paper_mod.rebalance(
+            state, active_ranked, active_mode, as_of, regime.allowed_tiers
+        )
+        paper_mod.save_state(state)
+        last_nav = state["nav_history"][-1]["nav"] if state["nav_history"] else 0.0
+        logger.info("paper trading NAV @ {} = {:,.0f}", as_of, last_nav)
+
+    hist_state = hist_mod.load()
+    hist_new, prev_regime, mismatch_streak = hist_mod.update(
+        hist_state, regime.as_of, regime.state, active_mode, regime.recommended_mode,
+    )
+    hist_mod.save(hist_new)
+
+    if args.notify:
+        channels = notify_mod.AlertChannels.from_env()
+        msgs: list[str] = []
+        m = notify_mod.build_risk_alert_message(risk_alerts)
+        if m:
+            msgs.append(m)
+        m = notify_mod.build_regime_change_message(prev_regime, regime.state, regime.recommended_mode)
+        if m:
+            msgs.append(m)
+        m = notify_mod.build_mode_mismatch_message(active_mode, regime.recommended_mode, mismatch_streak)
+        if m:
+            msgs.append(m)
+        if msgs:
+            notify_mod.dispatch("\n\n".join(msgs), subject=f"[KAP] {regime.as_of}", channels=channels)
+
+
+# Wrapped data fetch with exponential back-off retries (Stage 4 4-4).
+_retry_collect_ohlcv = retry(attempts=3, initial_delay=2.0)(collector.fetch_ohlcv)
+_retry_collect_index = retry(attempts=3, initial_delay=2.0)(collector.fetch_index_ohlcv)
 
 
 if __name__ == "__main__":

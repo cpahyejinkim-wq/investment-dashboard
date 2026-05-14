@@ -93,6 +93,99 @@ output/backtest_results.json    # 5개 전략 metrics
 
 Run with `python run_analysis.py --with-backtest` (또는 `--with-walk-forward`).
 
-## Next stage (per PRD §13.4)
+## Stage 4 scope (implemented)
 
-- Stage 4: scheduler.py + Slack/Email alerts + Paper Trading mode + 운영 매뉴얼.
+| Stage 4 deliverable | Status |
+| --- | --- |
+| 4-1 `scheduler.py` (cron-friendly `once` + standalone `loop` mode) | done |
+| 4-2 Slack/Email alerts (Risk / Regime change / Mode mismatch ≥ N days) | done |
+| 4-3 Paper Trading book (`output/paper_trading.json`, slippage + commission) | done |
+| 4-4 Retry decorator (exponential back-off) on data + notification calls | done |
+| 4-5 Performance pass on `volume_score` (per-ticker loops → vectorised groupby) | done |
+| 4-6 Operations manual (이 README 하단 섹션) | done |
+| Stage 4 unit tests (10 additional) | passing |
+
+### Stage 4 outputs
+
+```
+output/paper_trading.json   # NAV history + holdings + trade log
+output/run_history.json     # 이전 regime / mode mismatch streak (알림용)
+```
+
+---
+
+## 운영 매뉴얼
+
+### 1. 일일 운영 흐름
+
+```
+15:30 KST  → scheduler 가 run_analysis.py 트리거 (또는 crontab)
+             ├── pykrx 데이터 수집 (실패 시 3회 재시도, 모두 실패 시 synthetic)
+             ├── Regime → Factors → Mode Scores → Tier → Stops
+             ├── Soft Migration position book 갱신
+             ├── (옵션) 백테스트 / Paper Trading 갱신
+             └── (옵션) Slack/Email 알림 dispatch
+15:35 KST  → output/*.json 갱신, dashboard 자동 반영
+```
+
+### 2. 권장 crontab (예: KST 시스템)
+
+```
+30 15 * * 1-5  cd /opt/kap && /usr/bin/python3 scheduler.py once --paper-trading --notify
+```
+
+### 3. 알림 채널 환경변수
+
+| 변수 | 설명 |
+| --- | --- |
+| `KAP_SLACK_WEBHOOK` | Slack incoming-webhook URL (필요 시) |
+| `KAP_SMTP_HOST` / `KAP_SMTP_PORT` | SMTP 서버 |
+| `KAP_SMTP_USER` / `KAP_SMTP_PASSWORD` | 인증 (선택) |
+| `KAP_SMTP_FROM` / `KAP_SMTP_TO` | 발신/수신 주소 |
+
+채널이 하나도 설정되지 않으면 알림은 무음 처리되고 로그에만 기록됩니다.
+
+### 4. 알림 트리거
+
+- **Risk Alert**: Hard Stop 도달 (당일 종가 ≤ stop_loss)
+- **Regime Transition**: regime state 변경 (예: risk_on → risk_off)
+- **Mode Mismatch**: 권장 모드와 실제 모드가 `MODE_TRANSITION.alert_mismatch_days`일 (기본 3일) 연속 불일치
+
+### 5. Paper Trading 운영 (PRD §13.4-3)
+
+```
+python run_analysis.py --paper-trading
+```
+
+- 초기 자본 1억원
+- 매 실행마다 active mode 의 weight target 으로 리밸런싱
+- 슬리피지/수수료 적용 (`config.BACKTEST.slippage_pct`, `commission_pct`)
+- `output/paper_trading.json` 에 NAV / 보유종목 / 체결로그 유지
+- PRD 권고: 실전 투입 전 최소 3개월 운용 후 결과 검토
+
+### 6. 에러 복구
+
+- `kap.ops.retry` 데코레이터: 3회 재시도, 백오프 2 → 4 → 8초
+- 데이터 fetch 실패 → 결정론적 synthetic 데이터로 자동 폴백 (개발/테스트에서만 사용)
+- 알림 dispatch 실패 → 로그만 남기고 파이프라인은 정상 종료
+
+### 7. 성능 가이드
+
+| 단계 | 측정 (200종목 / 400일) |
+| --- | --- |
+| 데이터 수집 + 파케이 저장 | < 1초 (synthetic) |
+| 팩터 + 모드 점수 + Tier | ~1초 |
+| Stage 1+2+3 (백테스트 제외) | ~3초 |
+| 백테스트 5종 (Sprint/Marathon/Dynamic/2 BH) | ~2분 |
+| Walk-Forward (--with-walk-forward) | 수 분 ~ 십수 분 |
+
+운영 모드에서는 백테스트는 주말 1회 실행을 권장합니다.
+
+### 8. 검증 체크리스트 (PRD §16)
+
+- [ ] `run_analysis.py` 5분 이내 정상 완료
+- [ ] Mode Toggle 정상 작동 + Soft Migration 검증
+- [ ] Sprint/Marathon 백테스트 합리적 결과 (Sprint Sharpe ≥ 1.2)
+- [ ] Dynamic 전략이 단일 모드보다 우수한가 검증
+- [ ] Risk Alert 시나리오 (Hard stop / Regime stop / Time stop) 정상 동작
+- [ ] Paper Trading 3개월 운용 결과 검토 후 실전 인계
