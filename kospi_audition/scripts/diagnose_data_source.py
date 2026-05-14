@@ -47,8 +47,19 @@ def _version(pkg: str) -> str:
 
 def check_versions() -> None:
     logger.info("=== Step 1: package versions ===")
-    for pkg in ("pykrx", "FinanceDataReader", "pandas", "requests"):
-        logger.info("  {:<22} {}", pkg, _version(pkg))
+    # PyPI distribution names differ from import names — try both.
+    for label, candidates in (
+        ("pykrx", ["pykrx"]),
+        ("FinanceDataReader", ["finance-datareader", "FinanceDataReader"]),
+        ("pandas", ["pandas"]),
+        ("requests", ["requests"]),
+    ):
+        v = "NOT INSTALLED"
+        for c in candidates:
+            v = _version(c)
+            if v != "NOT INSTALLED":
+                break
+        logger.info("  {:<22} {}", label, v)
 
 
 def check_dns_and_egress() -> bool:
