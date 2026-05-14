@@ -82,17 +82,82 @@ def step1_import_pykrx() -> object:
     return stock
 
 
-def step2_ticker_list(stock: object, target: _dt.date) -> dict[str, int]:
-    date_str = target.strftime("%Y%m%d")
-    counts: dict[str, int] = {}
-    for market in ("KOSPI", "KOSDAQ"):
-        tickers = stock.get_market_ticker_list(date_str, market=market)  # type: ignore[attr-defined]
-        if not tickers:
-            logger.error("[2/5] {} ticker list empty for {}", market, date_str)
-            sys.exit(3)
-        counts[market] = len(tickers)
-    logger.info("[2/5] ticker list OK: KOSPI={}, KOSDAQ={}", counts["KOSPI"], counts["KOSDAQ"])
-    return counts
+CONNECTIVITY_PROBE_DATE = _dt.date(2024, 1, 2)  # known KRX trading day
+
+
+def _previous_business_day(d: _dt.date) -> _dt.date:
+    d = d - _dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= _dt.timedelta(days=1)
+    return d
+
+
+def _probe_ticker_list(stock: object, target: _dt.date, max_lookback: int = 30) -> tuple[_dt.date, dict[str, int]] | None:
+    """Walk back from ``target`` until a date returns a non-empty ticker list.
+
+    Handles three real-world cases the simple weekday rollback cannot:
+      - public holidays (Lunar New Year, Chuseok, ...)
+      - system clock set to a future date (no data exists yet)
+      - KRX maintenance windows
+    """
+    candidate = target
+    for _ in range(max_lookback):
+        date_str = candidate.strftime("%Y%m%d")
+        try:
+            kospi = stock.get_market_ticker_list(date_str, market="KOSPI")  # type: ignore[attr-defined]
+            kosdaq = stock.get_market_ticker_list(date_str, market="KOSDAQ")  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ticker_list({}): {}", date_str, exc)
+            kospi, kosdaq = [], []
+        if kospi and kosdaq:
+            return candidate, {"KOSPI": len(kospi), "KOSDAQ": len(kosdaq)}
+        candidate = _previous_business_day(candidate)
+    return None
+
+
+def _connectivity_probe(stock: object) -> int:
+    """Last-resort sanity check against a date KRX definitely has data for."""
+    date_str = CONNECTIVITY_PROBE_DATE.strftime("%Y%m%d")
+    try:
+        n = len(stock.get_market_ticker_list(date_str, market="KOSPI"))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return 0
+    return n
+
+
+def step2_ticker_list(stock: object, target: _dt.date) -> tuple[_dt.date, dict[str, int]]:
+    probed = _probe_ticker_list(stock, target)
+    if probed is not None:
+        used, counts = probed
+        if used != target:
+            logger.warning(
+                "[2/5] target {} returned empty - walked back to {} ({} bdays).",
+                target, used, (target - used).days,
+            )
+        logger.info(
+            "[2/5] ticker list OK @ {}: KOSPI={}, KOSDAQ={}",
+            used, counts["KOSPI"], counts["KOSDAQ"],
+        )
+        return used, counts
+
+    # Probe failed for the whole 30-bday window. Run connectivity test.
+    n = _connectivity_probe(stock)
+    if n > 0:
+        logger.error(
+            "[2/5] KRX has no data for any date in last 30 bdays from {} BUT {} returns {} tickers.\n"
+            "      → 가장 가능성 높은 원인: 시스템 시계가 미래 시점입니다.\n"
+            "        date.today() = {}. KRX 가 실제로 보유한 가장 최근 시점으로 시계를 맞추거나,\n"
+            "        run_analysis.py 호출 시 명시적 종료일을 코드 수준에서 지정하세요.",
+            target, CONNECTIVITY_PROBE_DATE, n, _dt.date.today(),
+        )
+    else:
+        logger.error(
+            "[2/5] KRX returned empty even for known good date {} - "
+            "네트워크/프록시 또는 pykrx 버전 문제일 수 있습니다. "
+            "`pip install -U pykrx` 후 재시도하세요.",
+            CONNECTIVITY_PROBE_DATE,
+        )
+    sys.exit(3)
 
 
 def step3_today_snapshot(stock: object, target: _dt.date) -> None:
@@ -166,12 +231,12 @@ def main() -> None:
     logger.info("=== pykrx live verification ===  target_date={}", target)
 
     stock = step1_import_pykrx()
-    step2_ticker_list(stock, target)
+    target, _ = step2_ticker_list(stock, target)  # may roll back further on holidays/future
     step3_today_snapshot(stock, target)
     step4_fast_collector(target)
     step5_indices(target)
 
-    logger.info("All 5 steps passed. pykrx live integration is operational.")
+    logger.info("All 5 steps passed. pykrx live integration is operational. target_date={}", target)
 
 
 if __name__ == "__main__":
