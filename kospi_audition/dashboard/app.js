@@ -18,7 +18,7 @@ async function loadJson(name) {
 }
 
 async function refresh() {
-  const [regime, sprintRanking, marathonRanking, risk, leaders, compare, positions] = await Promise.all([
+  const [regime, sprintRanking, marathonRanking, risk, leaders, compare, positions, sectorPower, backtest] = await Promise.all([
     loadJson("regime_data.json"),
     loadJson("ranking_sprint.json"),
     loadJson("ranking_marathon.json"),
@@ -26,6 +26,8 @@ async function refresh() {
     loadJson("new_leaders.json"),
     loadJson("mode_compare.json"),
     loadJson("positions.json"),
+    loadJson("sector_power.json"),
+    loadJson("backtest_results.json"),
   ]);
   STATE.data.regime = regime;
   STATE.data.ranking.sprint = sprintRanking;
@@ -34,6 +36,8 @@ async function refresh() {
   STATE.data.leaders = leaders;
   STATE.data.mode_compare = compare;
   STATE.data.positions = positions;
+  STATE.data.sector_power = sectorPower;
+  STATE.data.backtest = backtest;
   if (regime && regime.recommended_mode && regime.recommended_mode !== "cash") {
     initialActiveMode(STATE, regime.recommended_mode);
   }
@@ -49,6 +53,8 @@ function render() {
   renderRisk(STATE);
   renderModeCompare(STATE);
   renderMigrationNotice(STATE);
+  renderSectorPower(STATE);
+  renderBacktest(STATE);
 }
 
 function renderTopBar(state) {

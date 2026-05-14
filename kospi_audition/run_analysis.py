@@ -30,10 +30,17 @@ from kap.factors import (
     volume as volume_mod,
 )
 from kap.logging_setup import configure_logging
+from kap.backtest import engine as bt_engine
+from kap.backtest import walk_forward as wf_mod
+from kap.data import fundamentals as fund_mod
+from kap.factors import earnings as earnings_mod
+from kap.factors import quality as quality_mod
 from kap.modes import marathon as marathon_mode
 from kap.modes import sprint as sprint_mode
 from kap.portfolio import positions as positions_mod
-from kap.ranking import mode_compare, tier as tier_mod
+from kap.portfolio import vol_weight as vol_weight_mod
+from kap.ranking import leader_score as leader_mod
+from kap.ranking import mode_compare, sector_power as sector_power_mod, tier as tier_mod
 from kap.regime import compute_regime
 from kap.risk import entry_signal as entry_mod
 from kap.risk import sector_cap as sector_mod
@@ -46,6 +53,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["sprint", "marathon"], default=None,
                    help="Active mode for Soft Migration (default: regime recommendation)")
     p.add_argument("--log-level", default="INFO")
+    p.add_argument("--with-backtest", action="store_true",
+                   help="Also run Stage 3 backtest (slow)")
+    p.add_argument("--with-walk-forward", action="store_true",
+                   help="Also run Stage 3 walk-forward harness (very slow)")
     return p.parse_args()
 
 
@@ -188,13 +199,19 @@ def main() -> None:
     accel_df = accel_mod.compute_acceleration(ohlcv_uni, kospi)
     rv_df = rv_mod.compute_rank_velocity(_build_score_history(ohlcv_uni, kospi))
     volume_df = volume_mod.compute_volume_score(ohlcv_uni)
-    flow_raw = flow_mod.synthetic_flow(ohlcv_uni)  # Stage 2 stub until pykrx flow is wired.
+    flow_raw = flow_mod.synthetic_flow(ohlcv_uni)
     flow_df = flow_mod.compute_flow_score(flow_raw)
     entry_df = entry_mod.compute_entry_signals(ohlcv_uni)
 
+    # Stage 3 fundamentals + PEAD
+    fund_df = fund_mod.fetch_fundamentals(included, end=end)
+    quality_df = quality_mod.evaluate_quality(fund_df)
+    earnings_df = earnings_mod.compute_earnings_drift(ohlcv_uni, kospi, fund_df)
+
     logger.info(
-        "factors: rs={} accel={} rv={} vol={} flow={} entry={}",
-        len(rs_df), len(accel_df), len(rv_df), len(volume_df), len(flow_df), len(entry_df),
+        "factors: rs={} accel={} rv={} vol={} flow={} entry={} qual={} pead={}",
+        len(rs_df), len(accel_df), len(rv_df), len(volume_df), len(flow_df),
+        len(entry_df), len(quality_df), len(earnings_df),
     )
 
     # ---- Mode scores ------------------------------------------------------
@@ -203,6 +220,7 @@ def main() -> None:
     )
     marathon_scored = marathon_mode.compute_marathon_score(
         rs_df, accel_df, rv_df, volume=volume_df, flow=flow_df,
+        earnings_drift=earnings_df,
     )
 
     sprint_ranked = _build_ranking(
@@ -216,9 +234,25 @@ def main() -> None:
         regime.weight_multiplier, regime.allowed_tiers,
     )
 
+    # Stage 3: Quality Gate (may demote S/A -> B), Leader Score, Vol-Adjusted Weight
+    sprint_ranked = quality_mod.apply_quality_gate(sprint_ranked, quality_df, mode="sprint")
+    marathon_ranked = quality_mod.apply_quality_gate(marathon_ranked, quality_df, mode="marathon")
+
+    sprint_ranked = leader_mod.compute_leader_score(sprint_ranked)
+    marathon_ranked = leader_mod.compute_leader_score(marathon_ranked)
+
+    sprint_ranked = vol_weight_mod.adjust_weights(sprint_ranked, ohlcv_uni)
+    marathon_ranked = vol_weight_mod.adjust_weights(marathon_ranked, ohlcv_uni)
+
     as_of = regime.as_of.isoformat()
     json_writer.write_ranking(sprint_ranked, "sprint", as_of, len(included))
     json_writer.write_ranking(marathon_ranked, "marathon", as_of, len(included))
+
+    # Stage 3: Sector Power Score
+    active_for_sectors = sprint_ranked if active_mode == "sprint" else marathon_ranked
+    sector_power_df = sector_power_mod.compute_sector_power(active_for_sectors, ohlcv_uni)
+    top_tickers = sector_power_mod.top_tickers_per_sector(active_for_sectors)
+    json_writer.write_sector_power(sector_power_df, top_tickers, as_of=as_of)
 
     # ---- Mode Comparison --------------------------------------------------
     investable = ["S", "A", "B"]
@@ -262,7 +296,24 @@ def main() -> None:
     positions_mod.save_positions(book, as_of=as_of)
     json_writer.write_positions(book, events, as_of=as_of)
 
-    logger.info("=== Stage 1+2 done in {:.1f}s ===", time.time() - started)
+    # ---- Stage 3 backtest (opt-in) ---------------------------------------
+    if args.with_backtest or args.with_walk_forward:
+        index_df_full = index_df.copy()
+        ohlcv_full = ohlcv_uni.copy()
+        results = bt_engine.run_all(ohlcv_full, index_df_full)
+        metrics_payload = {
+            name: res.metrics(
+                config.BACKTEST["commission_pct"], config.BACKTEST["slippage_pct"]
+            )
+            for name, res in results.items()
+        }
+        if args.with_walk_forward:
+            metrics_payload["walk_forward"] = wf_mod.run_walk_forward(ohlcv_full, index_df_full)
+            metrics_payload["oos"] = wf_mod.run_oos(ohlcv_full, index_df_full)
+        json_writer.write_backtest(metrics_payload, as_of=as_of)
+        logger.info("backtest written ({} strategies)", len(results))
+
+    logger.info("=== Stage 1+2+3 done in {:.1f}s ===", time.time() - started)
 
 
 if __name__ == "__main__":

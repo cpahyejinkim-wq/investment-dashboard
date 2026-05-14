@@ -68,8 +68,31 @@ output/
 └── positions.json        # Stage 2 - Soft Migration position book + events
 ```
 
-## Next stages (per PRD §13)
+## Stage 3 scope (implemented)
 
-- Stage 3: DART fundamentals, Quality Gate, Earnings Drift, Sector Power Score,
-  Leader Score, Volatility-Adjusted Weight, Walk-Forward backtest.
-- Stage 4: Scheduler, Slack/Email alerts, Paper Trading hand-off.
+| Stage 3 deliverable | Status |
+| --- | --- |
+| 3-1 DART fundamentals connector (synthetic fallback) | done |
+| 3-2 Quality Score Gate (Sprint lenient on S, Marathon strict on S/A) | done |
+| 3-3 Earnings Drift (PEAD) for Marathon weight 5% | done |
+| 3-4 Sector Power Score (RS 50% + NewLeader 30% + TV growth 20%) + widget | done |
+| 3-5 New Leaders widget (이미 Stage 1에서 활성) | done |
+| 3-6 Leader Score 통합지표 (0.7 mode_score + 0.3 survival_weighted) | done |
+| 3-7 Volatility-Adjusted Weight (opt-in via config) | done |
+| 3-8 Backtest Engine: kospi_bh / kosdaq_bh / sprint / marathon / dynamic | done |
+| 3-9 Walk-Forward harness (train 24m / test 6m / step 3m) | done |
+| 3-10 Out-of-Sample (2023+ cutoff) | done |
+| Stage 3 unit tests (9 additional) | passing |
+
+### Stage 3 outputs
+
+```
+output/sector_power.json        # 섹터별 power + top tickers
+output/backtest_results.json    # 5개 전략 metrics
+```
+
+Run with `python run_analysis.py --with-backtest` (또는 `--with-walk-forward`).
+
+## Next stage (per PRD §13.4)
+
+- Stage 4: scheduler.py + Slack/Email alerts + Paper Trading mode + 운영 매뉴얼.

@@ -34,16 +34,16 @@ def compute_sprint_score(
 
     weights = config.MODES["sprint"]["weights"]
     base = rs.copy()
-    base = base.merge(acceleration[["ticker", "acceleration_pct"]], on="ticker", how="left")
-    base = base.merge(
-        rank_velocity[["ticker", "rank_velocity_pct"]], on="ticker", how="left"
-    )
+    if not acceleration.empty and "acceleration_pct" in acceleration.columns:
+        base = base.merge(acceleration[["ticker", "acceleration_pct"]], on="ticker", how="left")
+    if not rank_velocity.empty and "rank_velocity_pct" in rank_velocity.columns:
+        base = base.merge(rank_velocity[["ticker", "rank_velocity_pct"]], on="ticker", how="left")
 
-    if volume is not None and not volume.empty:
+    if volume is not None and not volume.empty and "volume_pct" in volume.columns:
         base = base.merge(volume[["ticker", "volume_pct"]], on="ticker", how="left")
     else:
         base["volume_pct"] = 50.0
-    if flow is not None and not flow.empty:
+    if flow is not None and not flow.empty and "flow_pct" in flow.columns:
         base = base.merge(flow[["ticker", "flow_pct"]], on="ticker", how="left")
     else:
         base["flow_pct"] = 50.0

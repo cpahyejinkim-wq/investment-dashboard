@@ -77,3 +77,39 @@ def write_positions(book: dict[str, dict[str, Any]], events: list[dict[str, Any]
         },
         "positions.json",
     )
+
+
+def write_sector_power(
+    sector_power: pd.DataFrame,
+    top_tickers: dict[str, list[str]],
+    as_of: str,
+) -> Path:
+    if sector_power.empty:
+        rows: list[dict[str, Any]] = []
+    else:
+        rows = []
+        for _, r in sector_power.iterrows():
+            sector = str(r.get("sector"))
+            rows.append(
+                {
+                    "sector": sector,
+                    "sector_power": _safe(r.get("sector_power")),
+                    "sector_rs_pct": _safe(r.get("sector_rs_pct")),
+                    "new_leader_count": _safe(r.get("new_leader_count", 0)),
+                    "new_leader_ratio": _safe(r.get("new_leader_ratio")),
+                    "trading_amount_growth": _safe(r.get("trading_amount_growth")),
+                    "top_tickers": top_tickers.get(sector, []),
+                }
+            )
+    return write_json({"as_of": as_of, "sectors": rows}, "sector_power.json")
+
+
+def write_backtest(results: dict[str, dict[str, Any]], as_of: str) -> Path:
+    payload = {
+        "as_of": as_of,
+        "strategies": {
+            name: {k: _safe(v) for k, v in metrics.items()}
+            for name, metrics in results.items()
+        },
+    }
+    return write_json(payload, "backtest_results.json")

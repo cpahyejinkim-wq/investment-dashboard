@@ -92,6 +92,13 @@
         </div>
 
         <div class="row">
+          <div class="card" id="sector-power-card">
+            <h4>Sector Power (Top 5)</h4>
+            <table id="sector-power">
+              <thead><tr><th>Sector</th><th>Power</th><th>RS%</th><th>NewLeader</th><th>TV↑</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
           <div class="card" id="new-leaders-card">
             <h4>New Leaders (Rank Velocity)</h4>
             <table id="new-leaders">
@@ -104,6 +111,14 @@
             <ul id="risk-alerts"></ul>
           </div>
         </div>
+
+        <div class="card full" id="backtest-card">
+          <h4>Backtest (Sprint / Marathon / Dynamic vs Benchmarks)</h4>
+          <table id="backtest-table">
+            <thead><tr><th>Strategy</th><th>CAGR</th><th>MDD</th><th>Sharpe</th><th>Sortino</th><th>Calmar</th><th>월승률</th><th>회전율</th><th>비용차감 CAGR</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
@@ -115,6 +130,8 @@
     <script src="components/risk_panel.js"></script>
     <script src="components/mode_compare.js"></script>
     <script src="components/migration_notice.js"></script>
+    <script src="components/sector_power.js"></script>
+    <script src="components/backtest_panel.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
