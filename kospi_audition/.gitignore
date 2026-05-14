@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Data artifacts
+data/raw/*.parquet
+data/processed/*.parquet
+*.duckdb
+*.duckdb.wal
+
+# Outputs are regenerated each run
+output/*.json
+output/chart_data/*.json
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

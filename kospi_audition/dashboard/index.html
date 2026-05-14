@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>KOSPI Audition Pyramid (v2.1)</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top-bar">
+      <div class="top-left">
+        <strong>KOSPI Audition Pyramid v2.1</strong>
+        <span id="as-of"></span>
+      </div>
+      <div class="top-center">
+        <span class="regime-state" id="regime-state">Regime: -</span>
+        <span class="recommended-mode" id="recommended-mode">권장: -</span>
+        <span id="kospi-close"></span>
+        <span id="kosdaq-close"></span>
+        <span id="vkospi"></span>
+      </div>
+      <div class="top-right">
+        <div class="mode-toggle" role="tablist" aria-label="Audition Mode Toggle">
+          <button id="mode-sprint" class="toggle-btn active" data-mode="sprint">Sprint</button>
+          <button id="mode-marathon" class="toggle-btn" data-mode="marathon">Marathon</button>
+        </div>
+        <div id="mode-mismatch" class="mismatch hidden" title="권장 모드와 다릅니다">!</div>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <aside class="sidebar">
+        <h3>Filter</h3>
+        <label>Tier
+          <select id="filter-tier">
+            <option value="all">All</option>
+            <option value="S">S</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+          </select>
+        </label>
+        <label>Market
+          <select id="filter-market">
+            <option value="all">All</option>
+            <option value="KOSPI">KOSPI</option>
+            <option value="KOSDAQ">KOSDAQ</option>
+          </select>
+        </label>
+        <h3>Universe</h3>
+        <div id="universe-size">-</div>
+      </aside>
+
+      <section class="content">
+        <div class="kpi-row" id="kpi-row"></div>
+
+        <div class="row">
+          <div class="card" id="regime-gauge">
+            <h4>Regime Gauge</h4>
+            <div id="regime-detail"></div>
+          </div>
+          <div class="card" id="pyramid">
+            <h4>Pyramid (Tier × 종목)</h4>
+            <div id="pyramid-detail"></div>
+          </div>
+          <div class="card" id="mode-comparison">
+            <h4>Mode Comparison (Stage 2 활성화)</h4>
+            <div class="placeholder">Marathon 점수 산출 후 표시됩니다.</div>
+          </div>
+        </div>
+
+        <div class="card full">
+          <h4>Leaderboard</h4>
+          <table id="leaderboard">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Tier</th>
+                <th>Ticker</th>
+                <th>Market</th>
+                <th>Mode Score</th>
+                <th>RS 20D</th>
+                <th>RS 60D</th>
+                <th>Accel %</th>
+                <th>RankVel</th>
+                <th>Weight</th>
+                <th>Stop</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="row">
+          <div class="card" id="new-leaders-card">
+            <h4>New Leaders (Rank Velocity)</h4>
+            <table id="new-leaders">
+              <thead><tr><th>Ticker</th><th>Tier</th><th>RankVel</th><th>Rank</th><th>Accel %</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="card" id="risk-card">
+            <h4>Risk Alerts</h4>
+            <ul id="risk-alerts"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="components/mode_toggle.js"></script>
+    <script src="components/regime_widget.js"></script>
+    <script src="components/leaderboard.js"></script>
+    <script src="components/pyramid.js"></script>
+    <script src="components/new_leaders.js"></script>
+    <script src="components/risk_panel.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
