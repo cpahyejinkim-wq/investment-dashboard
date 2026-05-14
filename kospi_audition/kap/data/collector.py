@@ -3,6 +3,15 @@
 The collector is intentionally tolerant of offline / missing pykrx environments:
 when pykrx is not importable (e.g. tests or sandboxed CI), it falls back to
 deterministic synthetic data so the rest of the pipeline remains testable.
+
+Two pykrx code paths are available:
+
+* ``fetch_ohlcv``        - legacy per-ticker scan (``get_market_ohlcv_by_date``);
+                           one HTTP round-trip per ticker, kept for parity.
+* ``fetch_ohlcv_fast``   - date-based scan (``get_market_ohlcv_by_ticker``); one
+                           HTTP round-trip per (date, market) and only for
+                           trading days **missing from the local parquet
+                           cache**. This is what production should call.
 """
 
 from __future__ import annotations
@@ -10,6 +19,7 @@ from __future__ import annotations
 import datetime as _dt
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -123,6 +133,141 @@ def fetch_ohlcv(window: CollectionWindow) -> pd.DataFrame:
     out["date"] = pd.to_datetime(out["date"]).dt.date
     logger.info("ohlcv assembled: {} rows", len(out))
     return out
+
+
+def fetch_ohlcv_fast(
+    window: CollectionWindow,
+    cache_name: str = "ohlcv",
+    markets: tuple[str, ...] = ("KOSPI", "KOSDAQ"),
+) -> pd.DataFrame:
+    """Incremental, date-based OHLCV collection (fast path).
+
+    Strategy:
+      1. Load any existing parquet cache from ``data/processed/<cache_name>.parquet``.
+      2. Determine the set of *missing* business days between the cache and
+         ``window.end``. Only those dates are fetched via
+         ``pykrx.stock.get_market_ohlcv_by_ticker(date, market)`` — one HTTP
+         call returns every ticker's OHLCV for that date.
+      3. Concatenate cache + new rows, deduplicate, save, and return only the
+         rows inside ``window``.
+
+    This brings a typical daily run from O(num_tickers) calls down to O(1)
+    call per market: ~2 calls vs. ~2,000.
+    """
+    stock = _try_import_pykrx()
+    if stock is None:
+        logger.warning("pykrx unavailable - falling back to synthetic OHLCV (fast)")
+        return _synthetic_ohlcv(window)
+
+    cache_path = config.DATA_PROCESSED / f"{cache_name}.parquet"
+    cached = _load_cache(cache_path)
+
+    # Business days inside the requested window.
+    bdays = pd.bdate_range(start=window.start, end=window.end).date.tolist()
+    if cached.empty:
+        missing = bdays
+    else:
+        have = set(pd.to_datetime(cached["date"]).dt.date.unique())
+        missing = [d for d in bdays if d not in have]
+
+    if not missing:
+        logger.info("ohlcv cache hit: 0 dates to fetch (window={} -> {})", window.start, window.end)
+        return _slice_window(cached, window)
+
+    logger.info("ohlcv fast path: fetching {} missing date(s) x {} markets", len(missing), len(markets))
+
+    new_frames: list[pd.DataFrame] = []
+    started = time.time()
+    for i, d in enumerate(missing, 1):
+        date_str = d.strftime("%Y%m%d")
+        for market in markets:
+            df = _fetch_ohlcv_by_ticker(stock, date_str, market)
+            if df is None or df.empty:
+                continue
+            cap = _fetch_market_cap(stock, date_str, market)
+            df["date"] = d
+            df["market"] = market
+            if cap is not None and not cap.empty:
+                df = df.merge(cap, left_on="ticker", right_on="ticker", how="left")
+            new_frames.append(df)
+        if i % 20 == 0:
+            logger.info("fast fetch progress: {}/{} dates ({:.1f}s)", i, len(missing), time.time() - started)
+
+    if not new_frames:
+        logger.warning("fast fetch returned 0 rows - using cache only")
+        return _slice_window(cached, window)
+
+    new_rows = pd.concat(new_frames, ignore_index=True)
+    combined = pd.concat([cached, new_rows], ignore_index=True) if not cached.empty else new_rows
+    combined["date"] = pd.to_datetime(combined["date"]).dt.date
+    combined = combined.drop_duplicates(subset=["ticker", "date"], keep="last")
+    combined = combined.sort_values(["ticker", "date"]).reset_index(drop=True)
+    _ensure_columns(combined)
+    save_parquet(combined, cache_name)
+
+    out = _slice_window(combined, window)
+    logger.info("ohlcv fast assembled: {} rows ({} dates fetched in {:.1f}s)",
+                len(out), len(missing), time.time() - started)
+    return out
+
+
+def _fetch_ohlcv_by_ticker(stock: object, date_str: str, market: str) -> pd.DataFrame | None:
+    try:
+        df = stock.get_market_ohlcv_by_ticker(date_str, market=market)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("by_ticker failed for {} {}: {}", date_str, market, exc)
+        return None
+    if df is None or df.empty:
+        return None
+    df = df.rename(
+        columns={
+            "시가": "open", "고가": "high", "저가": "low", "종가": "close",
+            "거래량": "volume", "거래대금": "trade_value",
+        }
+    )
+    df.index.name = "ticker"
+    return df.reset_index()
+
+
+def _fetch_market_cap(stock: object, date_str: str, market: str) -> pd.DataFrame | None:
+    try:
+        cap = stock.get_market_cap_by_ticker(date_str, market=market)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("market_cap failed for {} {}: {}", date_str, market, exc)
+        return None
+    if cap is None or cap.empty:
+        return None
+    cap = cap.rename(columns={"시가총액": "market_cap", "상장주식수": "shares"})
+    cap.index.name = "ticker"
+    return cap[["market_cap", "shares"]].reset_index()
+
+
+def _load_cache(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cache load failed ({}): {}", path, exc)
+        return pd.DataFrame()
+
+
+def _slice_window(df: pd.DataFrame, window: CollectionWindow) -> pd.DataFrame:
+    if df.empty:
+        return df
+    dates = pd.to_datetime(df["date"]).dt.date
+    return df[(dates >= window.start) & (dates <= window.end)].copy()
+
+
+def _ensure_columns(df: pd.DataFrame) -> None:
+    """Guarantee the canonical column set so downstream code never KeyErrors."""
+    keep = [
+        "ticker", "date", "market", "open", "high", "low", "close",
+        "volume", "trade_value", "market_cap", "shares",
+    ]
+    for col in keep:
+        if col not in df.columns:
+            df[col] = np.nan
 
 
 def fetch_index_ohlcv(window: CollectionWindow) -> pd.DataFrame:

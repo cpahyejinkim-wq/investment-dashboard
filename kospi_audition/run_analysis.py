@@ -65,6 +65,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Stage 4: update paper-trading state (output/paper_trading.json)")
     p.add_argument("--notify", action="store_true",
                    help="Stage 4: dispatch Slack/Email alerts based on env vars")
+    p.add_argument("--slow-collector", action="store_true",
+                   help="Use legacy per-ticker pykrx scan instead of fast date-based path")
     return p.parse_args()
 
 
@@ -179,7 +181,8 @@ def main() -> None:
     start = end - _dt.timedelta(days=args.days)
     win = collector.CollectionWindow(start=start, end=end)
 
-    ohlcv = _retry_collect_ohlcv(win)
+    collector_fn = _retry_collect_ohlcv if args.slow_collector else _retry_collect_ohlcv_fast
+    ohlcv = collector_fn(win)
     if ohlcv.empty:
         logger.error("no OHLCV - aborting")
         return
@@ -357,6 +360,7 @@ def main() -> None:
 
 # Wrapped data fetch with exponential back-off retries (Stage 4 4-4).
 _retry_collect_ohlcv = retry(attempts=3, initial_delay=2.0)(collector.fetch_ohlcv)
+_retry_collect_ohlcv_fast = retry(attempts=3, initial_delay=2.0)(collector.fetch_ohlcv_fast)
 _retry_collect_index = retry(attempts=3, initial_delay=2.0)(collector.fetch_index_ohlcv)
 
 

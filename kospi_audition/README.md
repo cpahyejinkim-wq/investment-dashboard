@@ -181,6 +181,36 @@ python run_analysis.py --paper-trading
 
 운영 모드에서는 백테스트는 주말 1회 실행을 권장합니다.
 
+### 7-a. pykrx 라이브 연동 검증 (운영 환경 1회 필수)
+
+```
+pip install pykrx
+python scripts/verify_pykrx.py
+```
+
+5단계를 순서대로 점검:
+
+1. `import pykrx` — 실패 시 즉시 종료
+2. KOSPI / KOSDAQ ticker list (당일 또는 직전 영업일)
+3. `get_market_ohlcv_by_ticker` — 당일 종가 스냅샷 (샘플 3종목 close/volume 출력)
+4. fast path collector — 14일 윈도우, parquet 캐시 검증
+5. KOSPI / KOSDAQ / VKOSPI 지수
+
+15:30 KST 이전 호출 시 "장 마감 전" 경고를 출력합니다 (당일 종가 미공시 가능성).
+
+### 7-b. Fast path collector (4-5 최적화)
+
+기본 collector 는 이제 `fetch_ohlcv_fast` 입니다.
+
+| 항목 | 기존 (`fetch_ohlcv`) | 신규 (`fetch_ohlcv_fast`) |
+| --- | --- | --- |
+| API | `get_market_ohlcv_by_date(start, end, ticker)` | `get_market_ohlcv_by_ticker(date, market)` |
+| 호출 횟수 (400일 / 2000종목) | ~2,000 | ~800 (영업일×2 마켓) |
+| 증분 캐시 | ❌ | ✅ parquet 기준 누락 영업일만 fetch |
+| 일간 운영 (1일치 갱신) | ~10분 | ~2초 (캐시 hit + 2 calls) |
+
+비상 시 레거시 경로로 폴백: `python run_analysis.py --slow-collector`.
+
 ### 8. 검증 체크리스트 (PRD §16)
 
 - [ ] `run_analysis.py` 5분 이내 정상 완료
