@@ -8,13 +8,17 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">KAP <span class="ver">v2.1</span></div>
+  <div class="brand">
+    <span class="brand-mark">KAP</span>
+    <span class="brand-ver">v2.1</span>
+    <span class="brand-sub">KOSPI Audition Pyramid</span>
+  </div>
   <div class="topbar-stats">
-    <div><span class="lbl">날짜</span><span id="data-as-of">—</span></div>
+    <div><span class="lbl">As of</span><span id="data-as-of" class="val">—</span></div>
     <div><span class="lbl">Regime</span><span id="regime-state" class="regime-pill">—</span></div>
-    <div><span class="lbl">권장 Mode</span><span id="recommended-mode">—</span></div>
-    <div><span class="lbl">KOSPI</span><span id="kospi-close">—</span></div>
-    <div><span class="lbl">VKOSPI</span><span id="vkospi">—</span></div>
+    <div><span class="lbl">권장 Mode</span><span id="recommended-mode" class="val">—</span></div>
+    <div><span class="lbl">KOSPI</span><span id="kospi-close" class="val">—</span></div>
+    <div><span class="lbl">VKOSPI</span><span id="vkospi" class="val">—</span></div>
   </div>
   <div class="mode-toggle">
     <button data-mode="sprint" class="active">Sprint</button>
@@ -48,10 +52,17 @@
     </div>
     <div class="universe-box">
       <h3>Universe</h3>
-      <p>크기: <strong id="universe-size">—</strong></p>
-      <p>S Tier: <strong id="kpi-s">—</strong></p>
-      <p>A Tier: <strong id="kpi-a">—</strong></p>
-      <p>B Tier: <strong id="kpi-b">—</strong></p>
+      <p>크기 <strong id="universe-size">—</strong></p>
+      <p>S Tier <strong id="kpi-s">—</strong></p>
+      <p>A Tier <strong id="kpi-a">—</strong></p>
+      <p>B Tier <strong id="kpi-b">—</strong></p>
+    </div>
+    <div class="legend-box">
+      <h3>Tier 의미</h3>
+      <p><span class="tier-badge S">S</span> 최상위 (집중 비중)</p>
+      <p><span class="tier-badge A">A</span> 상위 리더</p>
+      <p><span class="tier-badge B">B</span> 후보군</p>
+      <p><span class="tier-badge C">C</span> 관찰만</p>
     </div>
   </aside>
 
@@ -103,18 +114,52 @@
           <div><h4>Sprint</h4><ol id="cmp-sprint"></ol></div>
           <div><h4>Marathon</h4><ol id="cmp-marathon"></ol></div>
         </div>
-        <p class="hint">교집합: <b id="cmp-overlap">—</b></p>
+        <p class="hint">교집합 <b id="cmp-overlap">—</b></p>
       </div>
     </div>
 
     <div class="card" id="leaderboard-card">
-      <h3>Leaderboard (<span id="lb-mode">Sprint</span>)</h3>
+      <div class="card-header">
+        <h3>Leaderboard <span class="mode-tag" id="lb-mode">Sprint</span></h3>
+        <button class="btn-help" id="btn-help-leaderboard" title="컬럼 설명 보기">컬럼 설명</button>
+      </div>
+      <div id="help-panel" class="help-panel hidden">
+        <button class="help-close" id="help-close">×</button>
+        <h4>스코어 컬럼이 의미하는 것</h4>
+        <div class="help-grid">
+          <div><strong>Tier</strong>
+            <p>모드별 점수의 분위(percentile) 기반 등급. S(상위 ~3%)·A(~8%)·B(~18%)·C(관찰). 신규 진입은 Regime이 허용하는 Tier만 가능.</p></div>
+          <div><strong>Score</strong>
+            <p>선택된 모드의 종합 점수(0–100 percentile). Sprint = 단기 RS·가속도·순위변동 가중. Marathon = 장기 RS·수급·실적 가중.</p></div>
+          <div><strong>Leader</strong>
+            <p>Score×0.7 + 누적 생존일수×0.3. <b>높을수록 "기관형 리더"</b>, 낮을수록 "단기 급등주". Tier 결정엔 미사용, 표시 전용.</p></div>
+          <div><strong>RankVel</strong>
+            <p>최근 5거래일 대비 순위가 얼마나 올라왔는지를 percentile로 환산. <b>신규 리더 조기 탐지</b>. 절대 순위 200위 이내 종목만 유효.</p></div>
+          <div><strong>Accel</strong>
+            <p>RS의 2차 도함수(어제 대비 5D RS 변화) + 거래대금 가속도. <b>"이제 막 강해지기 시작한"</b> 종목을 잡아내는 지표.</p></div>
+          <div><strong>RS20 / RS60</strong>
+            <p>20일·60일 KOSPI 대비 초과수익률. + 값이면 시장보다 강하다는 뜻. Sprint는 단기(20D), Marathon은 중장기(60–252D)에 가중.</p></div>
+          <div><strong>Weight</strong>
+            <p>1차 진입 시 권장 포트폴리오 비중(현재 모드 + Regime 배수 반영). Risk-Off일 때는 0으로 차단됨.</p></div>
+          <div><strong>Stop</strong>
+            <p>진입가 기준 Hard Stop 가격. Sprint KOSPI −6% / KOSDAQ −8%, Marathon KOSPI −10% / KOSDAQ −12%. 모드별 차등.</p></div>
+        </div>
+      </div>
       <table class="leaderboard">
         <thead>
           <tr>
-            <th>#</th><th>Ticker</th><th>이름</th><th>섹터</th><th>Tier</th>
-            <th>Score</th><th>Leader</th><th>RankVel</th><th>Accel</th>
-            <th>RS20</th><th>RS60</th><th>Weight</th><th>Stop</th>
+            <th>#</th>
+            <th>종목</th>
+            <th>섹터</th>
+            <th>Tier<i class="info" data-tip="모드별 점수 percentile 기반 등급. S(상위~3%)/A(~8%)/B(~18%)/C(관찰).">ⓘ</i></th>
+            <th>Score<i class="info" data-tip="선택된 모드 종합 점수(0–100). 모드별 가중치로 RS/가속도/순위변동/거래량/수급을 합산.">ⓘ</i></th>
+            <th>Leader<i class="info" data-tip="Score×0.7 + 누적 생존일수×0.3. 기관형 장기 리더일수록 높음.">ⓘ</i></th>
+            <th>RankVel<i class="info" data-tip="5일 전 대비 순위가 얼마나 상승했는지의 percentile. 신규 리더 조기 탐지용.">ⓘ</i></th>
+            <th>Accel<i class="info" data-tip="RS 2차 도함수 + 거래대금 가속도. 이제 막 강해지기 시작한 종목을 포착.">ⓘ</i></th>
+            <th>RS20<i class="info" data-tip="최근 20거래일 KOSPI 대비 초과수익률. + 값이면 시장보다 강한 상태.">ⓘ</i></th>
+            <th>RS60<i class="info" data-tip="최근 60거래일 KOSPI 대비 초과수익률. 중기 추세 강도.">ⓘ</i></th>
+            <th>Weight<i class="info" data-tip="1차 진입 시 권장 포트폴리오 비중. Regime 배수 반영, Risk-Off면 0.">ⓘ</i></th>
+            <th>Stop<i class="info" data-tip="진입가 기준 Hard Stop 가격. 모드별 차등(Sprint −6/−8%, Marathon −10/−12%).">ⓘ</i></th>
           </tr>
         </thead>
         <tbody id="leaderboard-body"></tbody>
@@ -123,9 +168,9 @@
 
     <div class="row-2">
       <div class="card" id="new-leaders-card">
-        <h3>New Leaders (Rank Velocity)</h3>
+        <h3>New Leaders <span class="card-sub">(Rank Velocity 기반)</span></h3>
         <table>
-          <thead><tr><th>Ticker</th><th>이름</th><th>섹터</th><th>RankVel</th><th>Accel</th><th>Tier 변경</th></tr></thead>
+          <thead><tr><th>종목</th><th>섹터</th><th>RankVel</th><th>Accel</th><th>Tier 변경</th></tr></thead>
           <tbody id="new-leaders-body"></tbody>
         </table>
       </div>
@@ -145,7 +190,9 @@
   </section>
 </main>
 
-<footer><p>KAP v2.1 — KOSPI Audition Pyramid Dashboard. 데이터 갱신: <span id="footer-as-of">—</span></p></footer>
+<div id="tooltip" class="tooltip hidden"></div>
+
+<footer><p>KAP v2.1 — KOSPI Audition Pyramid Dashboard · 데이터 갱신 <span id="footer-as-of">—</span></p></footer>
 
 <script src="app.js"></script>
 </body>
