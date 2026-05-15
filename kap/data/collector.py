@@ -67,20 +67,48 @@ def _try_pykrx(end_date: date, lookback_days: int) -> CollectorResult | None:
         logger.info("pykrx not installed; using synthetic fallback")
         return None
     try:
-        end_str = _nearest_trading_day_str(end_date)
         start_str = (end_date - timedelta(days=int(lookback_days * 1.7))).strftime("%Y%m%d")
 
+        # KRX 서버에 데이터가 있는 가장 가까운 거래일을 찾는다.
+        # 오늘이 장중이거나 휴장일이면 시총 스냅샷이 비어 나올 수 있음.
         t0 = time.time()
-        logger.info("Fetching market cap snapshot from pykrx (date={})…", end_str)
-        cap_kospi = pykrx_stock.get_market_cap_by_ticker(end_str, market="KOSPI")
-        cap_kosdaq = pykrx_stock.get_market_cap_by_ticker(end_str, market="KOSDAQ")
-        cap_kospi["market"] = "KOSPI"
-        cap_kosdaq["market"] = "KOSDAQ"
-        cap_all = pd.concat([cap_kospi, cap_kosdaq])
+        cap_all = None
+        end_str = None
+        for delta in range(0, 10):
+            d = end_date - timedelta(days=delta)
+            if d.weekday() >= 5:  # 주말 스킵
+                continue
+            candidate = d.strftime("%Y%m%d")
+            try:
+                cap_kospi = pykrx_stock.get_market_cap_by_ticker(candidate, market="KOSPI")
+                cap_kosdaq = pykrx_stock.get_market_cap_by_ticker(candidate, market="KOSDAQ")
+            except Exception as inner:
+                logger.debug("Snapshot {} failed: {}", candidate, inner)
+                continue
+            if (cap_kospi is None or cap_kospi.empty
+                    or "시가총액" not in cap_kospi.columns
+                    or cap_kosdaq is None or cap_kosdaq.empty
+                    or "시가총액" not in cap_kosdaq.columns):
+                logger.info("No KRX snapshot data for {}; trying previous trading day…",
+                            candidate)
+                continue
+            cap_kospi["market"] = "KOSPI"
+            cap_kosdaq["market"] = "KOSDAQ"
+            cap_all = pd.concat([cap_kospi, cap_kosdaq])
+            end_str = candidate
+            logger.info("Using KRX market snapshot for trading day {}", candidate)
+            break
+
+        if cap_all is None or end_str is None:
+            logger.warning("No usable KRX snapshot within past 10 days — falling back")
+            return None
+
         cap_all = cap_all.reset_index().rename(columns={"티커": "ticker"})
         logger.info(
             "pykrx snapshot fetched: KOSPI={}, KOSDAQ={}, elapsed={:.1f}s",
-            len(cap_kospi), len(cap_kosdaq), time.time() - t0,
+            (cap_all["market"] == "KOSPI").sum(),
+            (cap_all["market"] == "KOSDAQ").sum(),
+            time.time() - t0,
         )
 
         # 1차 유니버스 필터 (시총만, 거래대금/상장일은 OHLCV 받은 뒤 다시 확인)
@@ -328,13 +356,21 @@ def _synthetic_dataset(end_date: date, lookback_days: int) -> CollectorResult:
 
 
 def _cache_is_fresh() -> bool:
-    """캐시된 parquet 파일이 모두 있고 cache_max_age_hours 이내인지 확인."""
+    """캐시된 parquet 파일이 모두 있고 cache_max_age_hours 이내이며,
+    합성(synthetic) 데이터 캐시는 prefer_pykrx=True일 때 무효 처리."""
     if not bool(DATA_FETCH.get("cache_parquet", True)):
         return False
     required = ["ohlcv.parquet", "flow.parquet", "index.parquet", "metadata.parquet"]
     files = [PROCESSED_DIR / f for f in required]
     if not all(f.exists() for f in files):
         return False
+    # 합성 데이터 캐시는 prefer_pykrx 모드에서 재사용 금지 (다음 실행에서 실데이터 재시도)
+    src_file = PROCESSED_DIR / ".source"
+    if src_file.exists() and bool(DATA_FETCH.get("prefer_pykrx", True)):
+        src = src_file.read_text(encoding="utf-8").strip()
+        if src != "pykrx":
+            logger.info("Cached data is '{}' but prefer_pykrx=True → will re-fetch", src)
+            return False
     import os
     max_age = float(DATA_FETCH.get("cache_max_age_hours", 12)) * 3600  # type: ignore[arg-type]
     newest = max(os.path.getmtime(f) for f in files)
@@ -382,7 +418,9 @@ def write_parquet(result: CollectorResult, out_dir: Path = PROCESSED_DIR) -> Non
     result.flow.to_parquet(out_dir / "flow.parquet", index=False)
     result.index.to_parquet(out_dir / "index.parquet", index=False)
     result.metadata.to_parquet(out_dir / "metadata.parquet", index=False)
-    logger.info("Wrote parquet files to {}", out_dir)
+    # 데이터 출처를 사이드카로 기록 (다음 실행에서 캐시 유효성 판단에 사용).
+    (out_dir / ".source").write_text(result.source, encoding="utf-8")
+    logger.info("Wrote parquet files to {} (source={})", out_dir, result.source)
 
 
 def load_parquet(out_dir: Path = PROCESSED_DIR) -> CollectorResult:
