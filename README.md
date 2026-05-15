@@ -25,14 +25,22 @@ Built per `KOSPI_Audition_Pyramid_v2_1_PRD.docx`.
 ## Run
 
 ```bash
-pip install -e .              # or pip install pandas numpy pyarrow loguru duckdb pykrx
+pip install pandas numpy pyarrow loguru duckdb pykrx pytest
+
+# 첫 실행 — pykrx로 실데이터 수집 (~2-3분)
+python scripts/run_analysis.py --refresh
+
+# 그 다음부터는 캐시 사용 (~5초)
 python scripts/run_analysis.py
-# then serve the dashboard:
-python -m http.server -d dashboard 8080
-# open http://localhost:8080
+
+# 대시보드 서버 (프로젝트 루트에서)
+python -m http.server 8765
+# 브라우저: http://localhost:8765/dashboard/
 ```
 
-The full pipeline runs in ~3s on the synthetic dataset (200 tickers × 400 days).
+`--refresh` 없이 실행하면 12시간 이내의 parquet 캐시(`data/processed/`)를 재사용합니다.
+pykrx 실패 시 자동으로 합성(synthetic) 데이터로 폴백합니다. 캐시 정책은
+`kap/config.py`의 `DATA_FETCH` 블록에서 조정.
 
 ## Tests
 

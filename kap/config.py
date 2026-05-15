@@ -178,9 +178,16 @@ BACKTEST: Final[dict[str, object]] = {
 }
 
 # ===== Data fetch =====
+# prefer_pykrx=True 이고 pykrx 임포트 성공 시 실데이터 사용.
+# pykrx_max_universe: 시총 상위 N개까지만 OHLCV를 받아 첫 실행 시간을 줄임 (~2-3분).
+# use_synthetic_fallback=True 면 pykrx 실패 시 합성 데이터로 폴백.
 DATA_FETCH: Final[dict[str, object]] = {
+    "prefer_pykrx": True,
+    "pykrx_max_universe": 200,
     "use_synthetic_fallback": True,
     "synthetic_n_kospi": 120,
     "synthetic_n_kosdaq": 80,
     "synthetic_history_days": 400,
+    "cache_parquet": True,            # data/processed/*.parquet 캐시 사용
+    "cache_max_age_hours": 12,        # N시간 이내 캐시면 재사용
 }

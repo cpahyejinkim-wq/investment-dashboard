@@ -52,26 +52,147 @@ SECTORS_KOSDAQ = [
 ]
 
 
+def _nearest_trading_day_str(end_date: date) -> str:
+    """KRX는 주말/공휴일 휴장. 가까운 거래일을 찾되, 최대 7일 전까지 시도."""
+    for delta in range(0, 7):
+        d = end_date - timedelta(days=delta)
+        if d.weekday() < 5:
+            return d.strftime("%Y%m%d")
+    return end_date.strftime("%Y%m%d")
+
+
 def _try_pykrx(end_date: date, lookback_days: int) -> CollectorResult | None:
-    """Attempt to collect from pykrx. Returns None on any failure."""
+    """Fetch real KRX data via pykrx. Returns None on any failure."""
     if not _HAS_PYKRX:
         logger.info("pykrx not installed; using synthetic fallback")
         return None
     try:
-        start = (end_date - timedelta(days=int(lookback_days * 1.5))).strftime("%Y%m%d")
-        end = end_date.strftime("%Y%m%d")
+        end_str = _nearest_trading_day_str(end_date)
+        start_str = (end_date - timedelta(days=int(lookback_days * 1.7))).strftime("%Y%m%d")
+
         t0 = time.time()
-        kospi_tickers = pykrx_stock.get_market_ticker_list(end, market="KOSPI")
-        kosdaq_tickers = pykrx_stock.get_market_ticker_list(end, market="KOSDAQ")
+        logger.info("Fetching market cap snapshot from pykrx (date={})…", end_str)
+        cap_kospi = pykrx_stock.get_market_cap_by_ticker(end_str, market="KOSPI")
+        cap_kosdaq = pykrx_stock.get_market_cap_by_ticker(end_str, market="KOSDAQ")
+        cap_kospi["market"] = "KOSPI"
+        cap_kosdaq["market"] = "KOSDAQ"
+        cap_all = pd.concat([cap_kospi, cap_kosdaq])
+        cap_all = cap_all.reset_index().rename(columns={"티커": "ticker"})
         logger.info(
-            "pykrx tickers fetched: KOSPI={}, KOSDAQ={}, elapsed={:.1f}s",
-            len(kospi_tickers), len(kosdaq_tickers), time.time() - t0,
+            "pykrx snapshot fetched: KOSPI={}, KOSDAQ={}, elapsed={:.1f}s",
+            len(cap_kospi), len(cap_kosdaq), time.time() - t0,
         )
-        # NOTE: This branch is intentionally lightweight - a full pykrx implementation
-        # would loop per ticker (slow). The pipeline supports it but real-data
-        # collection should be done by a dedicated scheduled job. For now,
-        # if pykrx loads but full collection is expensive, fall back to synthetic.
-        return None
+
+        # 1차 유니버스 필터 (시총만, 거래대금/상장일은 OHLCV 받은 뒤 다시 확인)
+        from kap.config import UNIVERSE
+        min_kp = int(UNIVERSE["min_market_cap_kospi"])
+        min_kd = int(UNIVERSE["min_market_cap_kosdaq"])
+        mask = (
+            ((cap_all["market"] == "KOSPI") & (cap_all["시가총액"] >= min_kp))
+            | ((cap_all["market"] == "KOSDAQ") & (cap_all["시가총액"] >= min_kd))
+        )
+        eligible = cap_all[mask].copy()
+        # 추가로 시총 큰 순으로 상위 N개만 — 첫 실행 시간을 줄이기 위해
+        max_universe = int(DATA_FETCH.get("pykrx_max_universe", 200))  # type: ignore[union-attr]
+        eligible = eligible.sort_values("시가총액", ascending=False).head(max_universe)
+        logger.info("Eligible universe after cap filter: {}", len(eligible))
+
+        # 종목명 조회
+        logger.info("Resolving stock names…")
+        names: dict[str, str] = {}
+        for tk in eligible["ticker"]:
+            try:
+                names[tk] = pykrx_stock.get_market_ticker_name(tk)
+            except Exception:
+                names[tk] = tk
+
+        # 섹터 — pykrx에 직접 매핑이 없음 → 시총 기반 그룹/"기타"로 분류
+        sectors: dict[str, str] = {}
+        try:
+            # 'KRX 업종' 분류 (있는 경우)
+            sec_df = pykrx_stock.get_index_portfolio_deposit_file  # noqa  # pragma: no cover
+        except Exception:
+            pass
+        for tk in eligible["ticker"]:
+            sectors[tk] = "기타"  # 단순 fallback; Stage 2에서 보강
+
+        # OHLCV 수집 (per-ticker)
+        ohlcv_frames: list[pd.DataFrame] = []
+        n_total = len(eligible)
+        t_ohlcv = time.time()
+        for i, (tk, row) in enumerate(eligible.iterrows(), start=1):
+            try:
+                df = pykrx_stock.get_market_ohlcv_by_date(start_str, end_str, row["ticker"])
+            except Exception as e:
+                logger.warning("OHLCV fetch failed for {}: {}", row["ticker"], e)
+                continue
+            if df is None or df.empty:
+                continue
+            df = df.reset_index().rename(columns={
+                "날짜": "date", "시가": "open", "고가": "high", "저가": "low",
+                "종가": "close", "거래량": "volume", "거래대금": "trade_value",
+            })
+            df["ticker"] = row["ticker"]
+            df["market"] = row["market"]
+            df["shares"] = int(row["상장주식수"])
+            df["market_cap"] = df["close"].astype(float) * df["shares"]
+            ohlcv_frames.append(df[["ticker", "date", "market", "open", "high", "low",
+                                     "close", "volume", "trade_value", "market_cap", "shares"]])
+            if i % 25 == 0 or i == n_total:
+                elapsed = time.time() - t_ohlcv
+                logger.info(
+                    "  OHLCV progress: {}/{} ({:.0f}%, {:.1f}s, ~{:.1f}s remaining)",
+                    i, n_total, i / n_total * 100, elapsed,
+                    elapsed / i * (n_total - i),
+                )
+        if not ohlcv_frames:
+            logger.warning("pykrx returned no OHLCV — falling back to synthetic")
+            return None
+        ohlcv = pd.concat(ohlcv_frames, ignore_index=True)
+        ohlcv["date"] = pd.to_datetime(ohlcv["date"])
+        logger.info("OHLCV combined: {:,} rows, elapsed={:.1f}s", len(ohlcv), time.time() - t_ohlcv)
+
+        # KOSPI/KOSDAQ index history
+        logger.info("Fetching index history…")
+        idx_kospi = pykrx_stock.get_index_ohlcv_by_date(start_str, end_str, "1001")  # 코스피
+        idx_kosdaq = pykrx_stock.get_index_ohlcv_by_date(start_str, end_str, "2001") # 코스닥
+        idx_df = pd.DataFrame({
+            "date": pd.to_datetime(idx_kospi.index),
+            "kospi_close": idx_kospi["종가"].values,
+            "kosdaq_close": idx_kosdaq["종가"].reindex(idx_kospi.index).ffill().values,
+        })
+        # VKOSPI (V-KOSPI 지수, 코드: 1497)
+        try:
+            vk = pykrx_stock.get_index_ohlcv_by_date(start_str, end_str, "1497")
+            idx_df["vkospi"] = vk["종가"].reindex(idx_kospi.index).ffill().values
+        except Exception:
+            idx_df["vkospi"] = 20.0  # 안전 디폴트
+
+        # 종목 메타데이터
+        metadata = pd.DataFrame({
+            "ticker": list(eligible["ticker"]),
+            "name": [names.get(tk, tk) for tk in eligible["ticker"]],
+            "market": list(eligible["market"]),
+            "sector": [sectors.get(tk, "기타") for tk in eligible["ticker"]],
+            "listing_date": [pd.Timestamp(end_date) - pd.Timedelta(days=365 * 5)
+                              for _ in eligible["ticker"]],
+        })
+
+        # Flow 데이터는 비용이 커서 Stage 1에서는 zero-fill (Flow 점수는 중립 50%)
+        flow_dates = sorted(ohlcv["date"].unique())
+        flow_rows = []
+        for tk in metadata["ticker"]:
+            for d in flow_dates:
+                flow_rows.append({
+                    "ticker": tk, "date": d,
+                    "foreign_net_buy": 0.0, "foreign_holding": 0.15,
+                    "inst_net_buy": 0.0, "individual_net_buy": 0.0,
+                })
+        flow = pd.DataFrame(flow_rows)
+
+        logger.info("pykrx collection complete: source=pykrx, total_elapsed={:.1f}s", time.time() - t0)
+        return CollectorResult(ohlcv=ohlcv, flow=flow, index=idx_df, metadata=metadata, source="pykrx")
+
     except Exception as exc:  # pragma: no cover - network failures
         logger.warning("pykrx collection failed: {} — falling back to synthetic", exc)
         return None
@@ -206,13 +327,46 @@ def _synthetic_dataset(end_date: date, lookback_days: int) -> CollectorResult:
     return CollectorResult(ohlcv=ohlcv, flow=flow, index=index_df, metadata=metadata, source="synthetic")
 
 
-def collect(end_date: date | None = None, lookback_days: int | None = None) -> CollectorResult:
-    """Main entry point. Tries pykrx, falls back to synthetic."""
+def _cache_is_fresh() -> bool:
+    """캐시된 parquet 파일이 모두 있고 cache_max_age_hours 이내인지 확인."""
+    if not bool(DATA_FETCH.get("cache_parquet", True)):
+        return False
+    required = ["ohlcv.parquet", "flow.parquet", "index.parquet", "metadata.parquet"]
+    files = [PROCESSED_DIR / f for f in required]
+    if not all(f.exists() for f in files):
+        return False
+    import os
+    max_age = float(DATA_FETCH.get("cache_max_age_hours", 12)) * 3600  # type: ignore[arg-type]
+    newest = max(os.path.getmtime(f) for f in files)
+    age = time.time() - newest
+    return age <= max_age
+
+
+def collect(
+    end_date: date | None = None,
+    lookback_days: int | None = None,
+    force_refresh: bool = False,
+) -> CollectorResult:
+    """Main entry point.
+
+    Priority: fresh parquet cache → pykrx (if prefer_pykrx) → synthetic fallback.
+    force_refresh=True 면 캐시 무시.
+    """
     end_date = end_date or date.today()
     lookback_days = lookback_days or int(DATA_FETCH["synthetic_history_days"])  # type: ignore[arg-type]
     t0 = time.time()
 
-    result = _try_pykrx(end_date, lookback_days)
+    if not force_refresh and _cache_is_fresh():
+        logger.info("Reusing cached parquet (within {}h)", DATA_FETCH.get("cache_max_age_hours"))
+        result = load_parquet()
+        logger.info("Cached load complete: source={}, elapsed={:.1f}s",
+                    result.source, time.time() - t0)
+        return result
+
+    prefer_pykrx = bool(DATA_FETCH.get("prefer_pykrx", True))
+    result: CollectorResult | None = None
+    if prefer_pykrx:
+        result = _try_pykrx(end_date, lookback_days)
     if result is None:
         if not bool(DATA_FETCH["use_synthetic_fallback"]):
             raise RuntimeError("pykrx collection failed and synthetic fallback is disabled")

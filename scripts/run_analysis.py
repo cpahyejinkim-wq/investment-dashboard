@@ -78,12 +78,12 @@ def _build_score_history_for_rank_velocity(
     return pd.DataFrame(history_rows)
 
 
-def run() -> None:
+def run(force_refresh: bool = False) -> None:
     t_start = time.time()
     logger.info("=== KAP v2.1 analysis pipeline starting ===")
 
     # 1. Data collection
-    result = collect()
+    result = collect(force_refresh=force_refresh)
     write_parquet(result)
     ohlcv, flow_df, index_df, metadata = result.ohlcv, result.flow, result.index, result.metadata
     as_of = pd.Timestamp(ohlcv["date"].max())
@@ -219,4 +219,9 @@ def _apply_topn_weights(scored: pd.DataFrame, topn) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+    p = argparse.ArgumentParser(description="KAP v2.1 analysis pipeline")
+    p.add_argument("--refresh", action="store_true",
+                   help="Ignore parquet cache and re-fetch from KRX (slower).")
+    args = p.parse_args()
+    run(force_refresh=args.refresh)
