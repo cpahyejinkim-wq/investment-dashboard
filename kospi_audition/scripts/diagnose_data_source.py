@@ -137,47 +137,50 @@ def check_raw_http() -> tuple[bool, bool]:
     return True, True
 
 
-def check_pykrx() -> bool:
+def check_pykrx() -> tuple[bool, bool]:
+    """Returns (call_succeeded, ssl_error_seen)."""
     logger.info("=== Step 4: pykrx live call ===")
     try:
         import pykrx.stock as stock  # type: ignore[import-not-found]
     except Exception as exc:  # noqa: BLE001
         logger.error("  pykrx import failed: {}", exc)
-        return False
+        return False, False
     date_str = KNOWN_GOOD_DATE.strftime("%Y%m%d")
     try:
         tickers = stock.get_market_ticker_list(date_str, market="KOSPI")
     except Exception as exc:  # noqa: BLE001
         logger.error("  pykrx call raised: {}", exc)
-        return False
+        ssl_err = "CERTIFICATE_VERIFY_FAILED" in str(exc) or "SSL" in str(exc)
+        return False, ssl_err
     if not tickers:
         logger.error("  pykrx returned empty list for known good date {} - pykrx 버전이 KRX 변경에 못 맞춰진 상태", KNOWN_GOOD_DATE)
         logger.error("  → 시도: pip install -U pykrx  (현재 버전: {})", _version("pykrx"))
-        return False
+        return False, False
     logger.info("  pykrx OK: {} KOSPI tickers for {}", len(tickers), KNOWN_GOOD_DATE)
-    return True
+    return True, False
 
 
-def check_finance_data_reader() -> bool:
-    """Alternative source - if pykrx is broken, FDR usually still works."""
+def check_finance_data_reader() -> tuple[bool, bool]:
+    """Returns (call_succeeded, ssl_error_seen)."""
     logger.info("=== Step 5: FinanceDataReader (alternative source) ===")
     try:
         import FinanceDataReader as fdr  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001
         logger.warning("  FinanceDataReader not installed. To use it as a backup:")
         logger.warning("    pip install finance-datareader")
-        return False
+        return False, False
     try:
         df = fdr.DataReader("005930", "2024-01-02", "2024-01-05")
     except Exception as exc:  # noqa: BLE001
         logger.error("  FDR call raised: {}", exc)
-        return False
+        ssl_err = "CERTIFICATE_VERIFY_FAILED" in str(exc) or "SSL" in str(exc)
+        return False, ssl_err
     if df is None or df.empty:
         logger.error("  FDR returned empty frame")
-        return False
+        return False, False
     last_close = float(df["Close"].iloc[-1])
     logger.info("  FDR OK: 005930 close near 2024-01-02 = {:,.0f}", last_close)
-    return True
+    return True, False
 
 
 def recommend(
@@ -186,15 +189,21 @@ def recommend(
     raw_body_ok: bool,
     pykrx_ok: bool,
     fdr_ok: bool,
+    ssl_seen: bool,
 ) -> None:
     logger.info("=== Recommendation ===")
-    if pykrx_ok:
-        logger.info("  ✅ pykrx 정상. verify_pykrx.py 가 실패한 건 일시적 이슈일 수 있습니다. 재시도해보세요.")
+    if pykrx_ok or fdr_ok:
+        if pykrx_ok:
+            logger.info("  ✅ pykrx 정상.")
+        if fdr_ok:
+            logger.warning("  ⚠ FDR 정상 — python run_analysis.py --collector fdr 로 진행하세요.")
         return
-    if fdr_ok:
-        logger.warning("  ⚠ pykrx 는 깨졌지만 FinanceDataReader 는 정상 — 운영은 FDR 로 진행하세요.")
-        logger.warning("     실행:  python run_analysis.py --collector fdr")
-        logger.warning("     또는:  set KAP_COLLECTOR=fdr  (Windows)  &&  python run_analysis.py")
+    if ssl_seen:
+        logger.error("  ❌ SSL 인증서 검증 실패 (회사 SSL 인터셉트 환경으로 추정).")
+        logger.error("     해결 우선순위:")
+        logger.error("       1) pip install pip-system-certs   (Windows 시스템 인증서 자동 사용)")
+        logger.error("       2) pip install truststore         (Python 3.10+ 표준 방식)")
+        logger.error("       3) 회사 IT 에 루트 인증서(.pem) 요청 후 certifi 번들에 추가")
         return
     if not network_ok:
         logger.error("  ❌ KRX 호스트에 TCP 연결 자체가 안 됩니다. (방화벽 / VPN / DNS 의심)")
@@ -215,9 +224,9 @@ def main() -> int:
         raw_reachable, raw_body_ok = check_raw_http()
     else:
         raw_reachable, raw_body_ok = False, False
-    pkx = check_pykrx() if net else False
-    fdr = check_finance_data_reader() if net else False
-    recommend(net, raw_reachable, raw_body_ok, pkx, fdr)
+    pkx, ssl_pykrx = check_pykrx() if net else (False, False)
+    fdr, ssl_fdr = check_finance_data_reader() if net else (False, False)
+    recommend(net, raw_reachable, raw_body_ok, pkx, fdr, ssl_pykrx or ssl_fdr)
     return 0 if pkx or fdr else 1
 
 
