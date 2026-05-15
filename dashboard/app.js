@@ -135,6 +135,97 @@ function rsCell(v) {
   return `<span class="${cls}">${fmt.pctSigned(v)}</span>`;
 }
 
+function priceCell(price, changePct) {
+  if (price == null) return "—";
+  let chg = "";
+  if (changePct != null && !Number.isNaN(Number(changePct))) {
+    const n = Number(changePct);
+    const cls = n >= 0 ? "val-up" : "val-down";
+    const sign = n >= 0 ? "+" : "";
+    chg = ` <span class="${cls} chg-small">${sign}${n.toFixed(2)}%</span>`;
+  }
+  return `<span class="price-num">${fmt.price(price)}</span>${chg}`;
+}
+
+function sparklineSvg(closes) {
+  const svg = document.getElementById("md-spark");
+  svg.innerHTML = "";
+  if (!Array.isArray(closes) || closes.length < 2) {
+    svg.innerHTML = `<text x="200" y="40" text-anchor="middle" fill="#8a96ac" font-size="11">데이터 없음</text>`;
+    return;
+  }
+  const W = 400, H = 80, pad = 4;
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const xs = closes.map((_, i) => pad + (W - 2 * pad) * i / (closes.length - 1));
+  const ys = closes.map(c => H - pad - (c - min) / range * (H - 2 * pad));
+  const path = xs.map((x, i) => (i === 0 ? `M${x},${ys[i]}` : `L${x},${ys[i]}`)).join(" ");
+  const area = path + ` L${xs[xs.length-1]},${H} L${xs[0]},${H} Z`;
+  const up = closes[closes.length - 1] >= closes[0];
+  const stroke = up ? "#00875a" : "#c0392b";
+  const fill = up ? "rgba(0,135,90,0.12)" : "rgba(192,57,43,0.12)";
+  svg.innerHTML = `
+    <path d="${area}" fill="${fill}" stroke="none"/>
+    <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.6"/>
+    <circle cx="${xs[xs.length-1]}" cy="${ys[ys.length-1]}" r="3" fill="${stroke}"/>
+  `;
+}
+
+function openDetail(t) {
+  document.getElementById("md-name").textContent = t.name || "(이름 없음)";
+  document.getElementById("md-code").textContent = t.ticker;
+  document.getElementById("md-market").textContent = t.market || "—";
+  document.getElementById("md-sector").textContent = t.sector || "—";
+
+  document.getElementById("md-price").textContent = t.current_price != null
+    ? fmt.price(t.current_price) + " 원" : "—";
+  const chgEl = document.getElementById("md-change");
+  if (t.change_pct != null && !Number.isNaN(Number(t.change_pct))) {
+    const n = Number(t.change_pct);
+    chgEl.className = "md-price-chg " + (n >= 0 ? "val-up" : "val-down");
+    chgEl.textContent = (n >= 0 ? "+" : "") + n.toFixed(2) + "% (전일 대비)";
+  } else {
+    chgEl.textContent = "전일 대비 변동 없음";
+    chgEl.className = "md-price-chg";
+  }
+
+  document.getElementById("md-tier").innerHTML = tierBadge(t.tier);
+  document.getElementById("md-score").textContent = fmt.num(t.mode_score_pct, 1);
+  document.getElementById("md-leader").textContent = fmt.num(t.leader_score, 1);
+  document.getElementById("md-mode").textContent = STATE.mode.charAt(0).toUpperCase() + STATE.mode.slice(1);
+
+  document.getElementById("md-accel").textContent = fmt.num(t.acceleration, 0);
+  document.getElementById("md-rv").textContent = fmt.num(t.rank_velocity_pct, 0);
+  document.getElementById("md-vol").textContent = fmt.num(t.volume_score, 0);
+  document.getElementById("md-flow").textContent = fmt.num(t.flow_score, 0);
+
+  document.getElementById("md-rs20").innerHTML = rsCell(t.rs_20d);
+  document.getElementById("md-rs60").innerHTML = rsCell(t.rs_60d);
+  document.getElementById("md-rs120").innerHTML = rsCell(t.rs_120d);
+  if (t.change_20d_pct != null && !Number.isNaN(Number(t.change_20d_pct))) {
+    const n = Number(t.change_20d_pct);
+    const cls = n >= 0 ? "val-up" : "val-down";
+    document.getElementById("md-20d").innerHTML = `<span class="${cls}">${(n>=0?"+":"") + n.toFixed(2)}%</span>`;
+  } else {
+    document.getElementById("md-20d").textContent = "—";
+  }
+
+  document.getElementById("md-weight").textContent = fmt.pctFromUnit(t.weight_target ?? t.weight, 2);
+  document.getElementById("md-stop").textContent = t.stop_loss != null
+    ? fmt.price(t.stop_loss) + " 원" : "—";
+  document.getElementById("md-tstop").textContent = t.trailing_stop != null
+    ? fmt.price(t.trailing_stop) + " 원" : "—";
+  document.getElementById("md-entry").textContent = t.entry_signal || "—";
+
+  sparklineSvg(t.close_history);
+  document.getElementById("detail-modal").classList.remove("hidden");
+}
+
+function closeDetail() {
+  document.getElementById("detail-modal").classList.add("hidden");
+}
+
 function renderLeaderboard() {
   const r = STATE.ranking[STATE.mode];
   const body = document.getElementById("leaderboard-body");
@@ -183,6 +274,8 @@ function renderLeaderboard() {
   }
   top.forEach((t, i) => {
     const tr = document.createElement("tr");
+    tr.className = "clickable";
+    tr.dataset.ticker = t.ticker;
     tr.innerHTML = `
       <td>${i + 1}</td>
       <td>${tickerCell(t)}</td>
@@ -194,9 +287,11 @@ function renderLeaderboard() {
       <td>${fmt.num(t.acceleration, 0)}</td>
       <td>${rsCell(t.rs_20d)}</td>
       <td>${rsCell(t.rs_60d)}</td>
+      <td>${priceCell(t.current_price, t.change_pct)}</td>
       <td>${fmt.pctFromUnit(t.weight, 2)}</td>
       <td>${fmt.price(t.stop_loss)}</td>
     `;
+    tr.addEventListener("click", () => openDetail(t));
     body.appendChild(tr);
   });
 }
@@ -409,6 +504,14 @@ function setupHandlers() {
   });
   document.getElementById("help-close").addEventListener("click", () => {
     help.classList.add("hidden");
+  });
+
+  // Detail modal close (backdrop click, × button, ESC)
+  document.querySelectorAll("#detail-modal [data-close]").forEach(el => {
+    el.addEventListener("click", closeDetail);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDetail();
   });
 }
 

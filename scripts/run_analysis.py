@@ -145,6 +145,11 @@ def run(force_refresh: bool = False) -> None:
         marathon_scored, "marathon_score_pct", "survival_weighted"
     )
 
+    # 8.5 종목별 일간 변동률, 20일 변동률, 60일 종가 히스토리 (대시보드 상세용)
+    price_extras = _build_price_extras(ohlcv, universe)
+    sprint_scored = sprint_scored.merge(price_extras, on="ticker", how="left")
+    marathon_scored = marathon_scored.merge(price_extras, on="ticker", how="left")
+
     # 9. Entry-time stop levels for ranked candidates
     sprint_active = sprint_scored[sprint_scored["tier"].isin(["S", "A", "B"])].copy()
     sprint_active = compute_initial_stops_for_candidates(sprint_active, mode="sprint")
@@ -203,6 +208,27 @@ def run(force_refresh: bool = False) -> None:
         )
     summary += f"  Elapsed: {elapsed:.1f}s"
     print(summary)
+
+
+def _build_price_extras(ohlcv: pd.DataFrame, universe: pd.DataFrame, history_n: int = 60) -> pd.DataFrame:
+    """티커별 일간 변동률, 20일 변동률, 최근 N일 종가 리스트(스파크라인용)."""
+    tickers = set(universe["ticker"])
+    df = ohlcv[ohlcv["ticker"].isin(tickers)].sort_values(["ticker", "date"])
+    rows = []
+    for tk, g in df.groupby("ticker", sort=False):
+        closes = g["close"].astype(float).tolist()
+        if len(closes) < 2:
+            continue
+        change_pct = (closes[-1] / closes[-2] - 1.0) * 100.0
+        change_20d_pct = (closes[-1] / closes[-21] - 1.0) * 100.0 if len(closes) >= 21 else None
+        history = closes[-history_n:]
+        rows.append({
+            "ticker": tk,
+            "change_pct": change_pct,
+            "change_20d_pct": change_20d_pct,
+            "close_history": history,
+        })
+    return pd.DataFrame(rows)
 
 
 def _apply_topn_weights(scored: pd.DataFrame, topn) -> pd.DataFrame:

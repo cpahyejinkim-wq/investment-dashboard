@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>KAP Dashboard v2.1</title>
-<link rel="stylesheet" href="style.css?v=20260515e" />
+<link rel="stylesheet" href="style.css?v=20260515f" />
 </head>
 <body>
 <header class="topbar">
@@ -184,6 +184,7 @@
             <th>Accel<i class="info" data-tip="RS 2차 도함수 + 거래대금 가속도. 이제 막 강해지기 시작한 종목을 포착.">ⓘ</i></th>
             <th>RS20<i class="info" data-tip="최근 20거래일 KOSPI 대비 초과수익률. + 값이면 시장보다 강한 상태.">ⓘ</i></th>
             <th>RS60<i class="info" data-tip="최근 60거래일 KOSPI 대비 초과수익률. 중기 추세 강도.">ⓘ</i></th>
+            <th>현재가<i class="info" data-tip="최근 거래일 종가. 옆 숫자(±%)는 전일 대비 변동률.">ⓘ</i></th>
             <th>Weight<i class="info" data-tip="1차 진입 시 권장 포트폴리오 비중. Regime 배수 반영, Risk-Off면 0.">ⓘ</i></th>
             <th>Stop<i class="info" data-tip="진입가 기준 Hard Stop 가격. 모드별 차등(Sprint −6/−8%, Marathon −10/−12%).">ⓘ</i></th>
           </tr>
@@ -218,8 +219,59 @@
 
 <div id="tooltip" class="tooltip hidden"></div>
 
+<div id="detail-modal" class="modal hidden">
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel">
+    <button class="modal-close" data-close>×</button>
+    <div class="modal-head">
+      <div>
+        <div class="modal-name" id="md-name">—</div>
+        <div class="modal-code"><span id="md-code">—</span> · <span id="md-market">—</span> · <span id="md-sector">—</span></div>
+      </div>
+      <div class="modal-price">
+        <div class="md-price-val" id="md-price">—</div>
+        <div class="md-price-chg" id="md-change">—</div>
+      </div>
+    </div>
+    <div class="modal-spark">
+      <svg id="md-spark" viewBox="0 0 400 80" preserveAspectRatio="none"></svg>
+      <div class="spark-label">최근 60거래일 종가</div>
+    </div>
+    <div class="modal-grid">
+      <div class="md-card">
+        <h5>등급 / 점수</h5>
+        <div class="md-row"><span>Tier</span><b id="md-tier">—</b></div>
+        <div class="md-row"><span>Score (percentile)</span><b id="md-score">—</b></div>
+        <div class="md-row"><span>Leader Score</span><b id="md-leader">—</b></div>
+        <div class="md-row"><span>현재 Mode</span><b id="md-mode">—</b></div>
+      </div>
+      <div class="md-card">
+        <h5>모멘텀</h5>
+        <div class="md-row"><span>Acceleration</span><b id="md-accel">—</b></div>
+        <div class="md-row"><span>Rank Velocity</span><b id="md-rv">—</b></div>
+        <div class="md-row"><span>Volume Score</span><b id="md-vol">—</b></div>
+        <div class="md-row"><span>Flow Score</span><b id="md-flow">—</b></div>
+      </div>
+      <div class="md-card">
+        <h5>Relative Strength</h5>
+        <div class="md-row"><span>RS 20D</span><b id="md-rs20">—</b></div>
+        <div class="md-row"><span>RS 60D</span><b id="md-rs60">—</b></div>
+        <div class="md-row"><span>RS 120D</span><b id="md-rs120">—</b></div>
+        <div class="md-row"><span>20일 등락률</span><b id="md-20d">—</b></div>
+      </div>
+      <div class="md-card">
+        <h5>리스크 / 포트폴리오</h5>
+        <div class="md-row"><span>Target Weight</span><b id="md-weight">—</b></div>
+        <div class="md-row"><span>Hard Stop</span><b id="md-stop">—</b></div>
+        <div class="md-row"><span>Trailing Stop</span><b id="md-tstop">—</b></div>
+        <div class="md-row"><span>Entry Signal</span><b id="md-entry">—</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer><p>KAP v2.1 — KOSPI Audition Pyramid Dashboard · 데이터 갱신 <span id="footer-as-of">—</span></p></footer>
 
-<script src="app.js?v=20260515e"></script>
+<script src="app.js?v=20260515f"></script>
 </body>
 </html>

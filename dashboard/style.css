@@ -390,6 +390,89 @@ table tr:hover td { background: var(--steel-soft); }
 .risk-item .triggered { color: var(--down); font-weight: 700;
                         text-transform: uppercase; font-size: 11px; letter-spacing: 0.4px; }
 
+/* =================== Clickable rows + price cell =================== */
+table tr.clickable { cursor: pointer; }
+table tr.clickable:hover td { background: var(--steel-soft); }
+.price-num { font-weight: 600; color: var(--navy); font-variant-numeric: tabular-nums; }
+.chg-small { font-size: 10.5px; margin-left: 4px; }
+
+/* =================== Detail modal =================== */
+.modal {
+  position: fixed; inset: 0; z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.modal.hidden { display: none; }
+.modal-backdrop {
+  position: absolute; inset: 0; background: rgba(11, 37, 69, 0.45);
+  backdrop-filter: blur(2px);
+}
+.modal-panel {
+  position: relative; z-index: 1; width: 100%; max-width: 760px;
+  max-height: calc(100vh - 48px); overflow-y: auto;
+  background: var(--panel); border-radius: 8px; padding: 22px 26px;
+  box-shadow: 0 10px 40px rgba(11, 37, 69, 0.28);
+  border-top: 4px solid var(--gold);
+}
+.modal-close {
+  position: absolute; top: 12px; right: 14px; background: transparent; border: 0;
+  font-size: 24px; line-height: 1; color: var(--text-muted); cursor: pointer;
+  padding: 4px 10px; border-radius: 4px;
+}
+.modal-close:hover { background: var(--bg-alt); color: var(--navy); }
+
+.modal-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border-soft);
+  gap: 16px;
+}
+.modal-name { font-size: 20px; font-weight: 700; color: var(--navy); }
+.modal-code {
+  font-size: 11px; color: var(--text-muted); margin-top: 4px;
+  font-family: "SF Mono", "Menlo", monospace;
+}
+.modal-price { text-align: right; }
+.md-price-val {
+  font-size: 22px; font-weight: 700; color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+.md-price-chg { font-size: 12px; margin-top: 2px; font-weight: 600; }
+
+.modal-spark {
+  background: var(--panel-2); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 8px 10px; margin-bottom: 16px;
+}
+.modal-spark svg { width: 100%; height: 80px; display: block; }
+.spark-label {
+  text-align: center; font-size: 10.5px; color: var(--text-muted); margin-top: 4px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.modal-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.md-card {
+  background: var(--panel-2); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 12px 14px;
+}
+.md-card h5 {
+  margin: 0 0 8px; font-size: 10.5px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.6px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border-soft);
+}
+.md-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; font-size: 12px;
+}
+.md-row span { color: var(--text-muted); }
+.md-row b {
+  color: var(--navy); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .modal-grid { grid-template-columns: 1fr; }
+}
+
 /* =================== Footer =================== */
 footer {
   padding: 18px; text-align: center; color: var(--text-faint); font-size: 11px;
