@@ -199,8 +199,8 @@ def test_end_to_end_outputs_exist():
 def test_sprint_marathon_top10_overlap_in_range():
     """PRD §15 scenario D: Sprint Top10 vs Marathon Top10 intersection should
     fall in 0..10 (i.e. not 100% identical, not totally disjoint by accident)."""
-    sprint = json.loads((OUTPUT_DIR / "ranking_sprint.json").read_text())
-    marathon = json.loads((OUTPUT_DIR / "ranking_marathon.json").read_text())
+    sprint = json.loads((OUTPUT_DIR / "ranking_sprint.json").read_text(encoding="utf-8"))
+    marathon = json.loads((OUTPUT_DIR / "ranking_marathon.json").read_text(encoding="utf-8"))
     sp_top = {t["ticker"] for t in sprint["tickers"][:10]}
     ma_top = {t["ticker"] for t in marathon["tickers"][:10]}
     overlap = len(sp_top & ma_top)

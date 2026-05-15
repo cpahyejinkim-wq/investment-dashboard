@@ -56,7 +56,7 @@ def _load_prior_state(mode: str) -> set[str]:
     if not p.exists():
         return set()
     try:
-        prev = json.loads(p.read_text())
+        prev = json.loads(p.read_text(encoding="utf-8"))
         if prev.get("mode") != mode:
             return set()
         return {h["ticker"] for h in prev.get("holdings", [])}
@@ -74,7 +74,7 @@ def _save_state(result: TopNResult) -> None:
         "regime_state": result.regime_state,
         "holdings": [asdict(h) for h in result.holdings],
     }
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("Saved portfolio state to {}", p)
 
 
@@ -231,6 +231,6 @@ def export_portfolio_json(result: TopNResult, mode: str) -> Path:
         "dropped": [asdict(h) for h in result.dropped],
     }
     p = OUTPUT_DIR / f"portfolio_{mode}.json"
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("Wrote {}", p)
     return p
