@@ -8,6 +8,7 @@ const STATE = {
   mode: "sprint",
   regime: null,
   ranking: { sprint: null, marathon: null },
+  portfolio: { sprint: null, marathon: null },
   newLeaders: null,
   sectors: null,
   riskAlerts: null,
@@ -40,10 +41,12 @@ async function loadJson(path) {
 }
 
 async function loadAll() {
-  const [regime, rankSprint, rankMarathon, newLeaders, sectors, risk] = await Promise.all([
+  const [regime, rankSprint, rankMarathon, pfSprint, pfMarathon, newLeaders, sectors, risk] = await Promise.all([
     loadJson("../output/regime_data.json"),
     loadJson("../output/ranking_sprint.json"),
     loadJson("../output/ranking_marathon.json"),
+    loadJson("../output/portfolio_sprint.json"),
+    loadJson("../output/portfolio_marathon.json"),
     loadJson("../output/new_leaders.json"),
     loadJson("../output/sector_data.json"),
     loadJson("../output/risk_alerts.json"),
@@ -51,6 +54,8 @@ async function loadAll() {
   STATE.regime = regime;
   STATE.ranking.sprint = rankSprint;
   STATE.ranking.marathon = rankMarathon;
+  STATE.portfolio.sprint = pfSprint;
+  STATE.portfolio.marathon = pfMarathon;
   STATE.newLeaders = newLeaders;
   STATE.sectors = sectors;
   STATE.riskAlerts = risk;
@@ -281,8 +286,64 @@ function renderRiskAlerts() {
   `).join("");
 }
 
+function renderPortfolio() {
+  const pf = STATE.portfolio[STATE.mode];
+  document.getElementById("pf-mode").textContent = STATE.mode.charAt(0).toUpperCase() + STATE.mode.slice(1);
+  const body = document.getElementById("portfolio-body");
+  body.innerHTML = "";
+  if (!pf) {
+    body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted)">portfolio_${STATE.mode}.json 없음</td></tr>`;
+    return;
+  }
+
+  const newCount = pf.holdings.filter(h => h.status === "new").length;
+  const keptCount = pf.holdings.filter(h => h.status === "kept").length;
+  const droppedCount = pf.dropped.length;
+
+  document.getElementById("pf-n").textContent = `${pf.n_actual}/${pf.n_target}`;
+  document.getElementById("pf-invested").textContent = fmt.pctFromUnit(pf.invested_pct);
+  document.getElementById("pf-cash").textContent = fmt.pctFromUnit(pf.cash_pct);
+  document.getElementById("pf-new").textContent = newCount;
+  document.getElementById("pf-kept").textContent = keptCount;
+  document.getElementById("pf-dropped").textContent = droppedCount;
+
+  if (pf.holdings.length === 0) {
+    body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted)">현재 보유 종목 없음 (Regime: ${pf.regime_state})</td></tr>`;
+  } else {
+    pf.holdings.forEach((h, i) => {
+      const tr = document.createElement("tr");
+      const wPct = h.weight * 100;
+      tr.innerHTML = `
+        <td><span class="pf-badge ${h.status}">${h.status === "new" ? "신규" : "유지"}</span></td>
+        <td>${i + 1}</td>
+        <td>${tickerCell(h)}</td>
+        <td>${h.sector || "—"}</td>
+        <td>${tierBadge(h.tier)}</td>
+        <td>${fmt.num(h.mode_score_pct, 1)}</td>
+        <td><b>${wPct.toFixed(2)}%</b></td>
+        <td class="bar-col"><div class="weight-bar"><span style="width:${Math.min(100, wPct * 5)}%"></span></div></td>
+      `;
+      body.appendChild(tr);
+    });
+  }
+
+  // Show dropped as separate rows at the bottom
+  pf.dropped.forEach(h => {
+    const tr = document.createElement("tr");
+    tr.className = "dropped-row";
+    tr.innerHTML = `
+      <td><span class="pf-badge dropped">탈락</span></td>
+      <td>—</td>
+      <td><div class="ticker-cell"><span class="name">${h.name || "(이전 보유)"}</span><span class="code">${h.ticker}</span></div></td>
+      <td colspan="5" style="color:var(--text-muted)">전 사이클 보유 → 이번 사이클에서 매도</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
 function renderAll() {
   renderRegime();
+  renderPortfolio();
   renderLeaderboard();
   renderModeCompare();
   renderNewLeaders();
@@ -327,6 +388,7 @@ function setupHandlers() {
       STATE.mode = btn.dataset.mode;
       document.querySelectorAll(".mode-toggle button").forEach(b => b.classList.toggle("active", b === btn));
       renderRegime();
+      renderPortfolio();
       renderLeaderboard();
     });
   });

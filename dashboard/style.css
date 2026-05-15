@@ -346,6 +346,35 @@ table tr:hover td { background: var(--steel-soft); }
 .help-grid p { margin: 0; color: var(--text-muted); }
 .help-grid b { color: var(--text); font-weight: 600; }
 
+/* =================== Portfolio card =================== */
+#portfolio-card .card-header { margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft); }
+.pf-summary {
+  display: flex; align-items: center; gap: 10px; font-size: 12px;
+  color: var(--text);
+}
+.pf-summary b { color: var(--navy); font-weight: 700; font-variant-numeric: tabular-nums; }
+.pf-summary .muted { color: var(--text-muted); font-size: 11px; }
+
+.pf-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 3px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px;
+}
+.pf-badge.new     { background: var(--up-soft);    color: var(--up); }
+.pf-badge.kept    { background: var(--steel-soft); color: var(--steel); }
+.pf-badge.dropped { background: var(--down-soft);  color: var(--down); }
+
+.portfolio-table .bar-col { width: 25%; }
+.weight-bar {
+  height: 10px; background: var(--bg-alt); border-radius: 3px; overflow: hidden;
+}
+.weight-bar > span {
+  display: block; height: 100%; background: linear-gradient(90deg, var(--steel), var(--gold));
+  border-radius: 3px;
+}
+.dropped-row { background: var(--down-soft); opacity: 0.7; }
+.dropped-row:hover td { background: var(--down-soft); }
+
 /* =================== Risk Alerts =================== */
 .risk-empty {
   color: var(--text-muted); padding: 18px 0; text-align: center;

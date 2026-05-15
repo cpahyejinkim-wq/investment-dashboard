@@ -151,6 +151,21 @@ VOL_ADJUSTED_WEIGHT: Final[dict[str, object]] = {
     "target_vol_window": 60,
 }
 
+# ===== Portfolio Construction Strategy =====
+# "pyramid" — PRD default: tiered base weights × pyramid_first × regime multiplier,
+#             min_cash 유보. 검증 후 추가매수로 weight_target까지 도달.
+# "topn"    — Top-N momentum: 매 사이클 mode_score 상위 N개를 골라 100% 배분.
+#             탈락 종목은 매도, 신규 편입 종목은 매수. 현금 보유 없음.
+PORTFOLIO: Final[dict[str, object]] = {
+    "strategy": "topn",          # "pyramid" or "topn"
+    "topn": {
+        "n": 10,                  # 보유 종목 수 (고정)
+        "weighting": "score",     # "score" | "tier" | "equal"
+        "force_full_deployment": True,  # 현금 0%, 합계 100%
+        "min_regime_multiplier": 0.3,   # Risk-Off가 아니면 최소 30%는 투자
+    },
+}
+
 # ===== Backtest (PRD §10) =====
 BACKTEST: Final[dict[str, object]] = {
     "start_date": "2015-01-01",

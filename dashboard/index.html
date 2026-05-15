@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>KAP Dashboard v2.1</title>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=20260515b" />
 </head>
 <body>
 <header class="topbar">
@@ -118,6 +118,32 @@
       </div>
     </div>
 
+    <div class="card" id="portfolio-card">
+      <div class="card-header">
+        <h3>포트폴리오 구성 <span class="mode-tag" id="pf-mode">Sprint</span></h3>
+        <div class="pf-summary">
+          <span><b id="pf-n">—</b> <span class="muted">종목</span></span>
+          <span class="muted">·</span>
+          <span class="val-up"><b id="pf-invested">—</b> <span class="muted">투자</span></span>
+          <span class="muted">·</span>
+          <span><b id="pf-cash">—</b> <span class="muted">현금</span></span>
+          <span class="muted">·</span>
+          <span><b id="pf-new">—</b> <span class="muted">신규</span></span>
+          <span><b id="pf-kept">—</b> <span class="muted">유지</span></span>
+          <span><b id="pf-dropped">—</b> <span class="muted">탈락</span></span>
+        </div>
+      </div>
+      <table class="portfolio-table">
+        <thead>
+          <tr>
+            <th>상태</th><th>#</th><th>종목</th><th>섹터</th><th>Tier</th>
+            <th>Score</th><th>비중</th><th class="bar-col">시각화</th>
+          </tr>
+        </thead>
+        <tbody id="portfolio-body"></tbody>
+      </table>
+    </div>
+
     <div class="card" id="leaderboard-card">
       <div class="card-header">
         <h3>Leaderboard <span class="mode-tag" id="lb-mode">Sprint</span></h3>
@@ -194,6 +220,6 @@
 
 <footer><p>KAP v2.1 — KOSPI Audition Pyramid Dashboard · 데이터 갱신 <span id="footer-as-of">—</span></p></footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260515b"></script>
 </body>
 </html>

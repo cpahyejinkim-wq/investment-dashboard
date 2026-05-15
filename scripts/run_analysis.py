@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kap.config import MODES, OUTPUT_DIR
+from kap.config import MODES, OUTPUT_DIR, PORTFOLIO
 from kap.data.collector import collect, write_parquet
 from kap.data.universe import build_universe
 from kap.regime.filter import compute_regime
@@ -36,6 +36,7 @@ from kap.modes.marathon import compute_marathon_score
 from kap.ranking.tier import classify_tier, apply_tier_caps, assign_weights
 from kap.ranking.leader_score import compute_leader_score
 from kap.risk.stop_loss import compute_initial_stops_for_candidates
+from kap.portfolio.topn import build_topn_portfolio, export_portfolio_json
 from kap.export.json_export import (
     export_regime, export_ranking, export_new_leaders,
     export_sector_summary, export_risk_alerts,
@@ -158,7 +159,19 @@ def run() -> None:
         on="ticker", how="left",
     )
 
-    # 10. JSON exports
+    # 10. Portfolio construction
+    strategy = str(PORTFOLIO.get("strategy", "pyramid"))
+    sprint_topn = marathon_topn = None
+    if strategy == "topn":
+        sprint_topn = build_topn_portfolio(sprint_scored, mode="sprint", regime_state=regime.state)
+        marathon_topn = build_topn_portfolio(marathon_scored, mode="marathon", regime_state=regime.state)
+        export_portfolio_json(sprint_topn, mode="sprint")
+        export_portfolio_json(marathon_topn, mode="marathon")
+        # Override the weight column in ranking exports with Top-N weights
+        sprint_scored = _apply_topn_weights(sprint_scored, sprint_topn)
+        marathon_scored = _apply_topn_weights(marathon_scored, marathon_topn)
+
+    # 11. JSON exports
     export_regime(regime, current_mode=regime.recommended_mode)
     export_ranking(
         sprint_scored.sort_values("sprint_score_pct", ascending=False),
@@ -174,11 +187,35 @@ def run() -> None:
 
     elapsed = time.time() - t_start
     logger.info("=== Pipeline complete in {:.1f}s ===", elapsed)
-    print(f"\nDone. Outputs in {OUTPUT_DIR}\n"
-          f"  Regime: {regime.state} (score={regime.score}) → recommended: {regime.recommended_mode}\n"
-          f"  Sprint candidates (S+A+B): {len(sprint_active)}\n"
-          f"  Marathon candidates (S+A+B): {len(marathon_active)}\n"
-          f"  Elapsed: {elapsed:.1f}s")
+    summary = (
+        f"\nDone. Outputs in {OUTPUT_DIR}\n"
+        f"  Strategy: {strategy}\n"
+        f"  Regime: {regime.state} (score={regime.score}) → recommended: {regime.recommended_mode}\n"
+        f"  Sprint candidates (S+A+B): {len(sprint_active)}\n"
+        f"  Marathon candidates (S+A+B): {len(marathon_active)}\n"
+    )
+    if sprint_topn is not None:
+        summary += (
+            f"  Sprint Top-N: {sprint_topn.n_actual}/{sprint_topn.n_target} stocks, "
+            f"invested {sprint_topn.invested_pct:.1%}\n"
+            f"  Marathon Top-N: {marathon_topn.n_actual}/{marathon_topn.n_target} stocks, "
+            f"invested {marathon_topn.invested_pct:.1%}\n"
+        )
+    summary += f"  Elapsed: {elapsed:.1f}s"
+    print(summary)
+
+
+def _apply_topn_weights(scored: pd.DataFrame, topn) -> pd.DataFrame:
+    """Replace `weight` column with Top-N portfolio allocation; non-held → 0."""
+    if topn is None or not topn.holdings:
+        scored["weight"] = 0.0
+        return scored
+    w_map = {h.ticker: h.weight for h in topn.holdings}
+    status_map = {h.ticker: h.status for h in topn.holdings}
+    scored = scored.copy()
+    scored["weight"] = scored["ticker"].map(w_map).fillna(0.0)
+    scored["portfolio_status"] = scored["ticker"].map(status_map).fillna("out")
+    return scored
 
 
 if __name__ == "__main__":

@@ -91,17 +91,21 @@ def _synthetic_dataset(end_date: date, lookback_days: int) -> CollectorResult:
     # Business-day calendar
     dates = pd.bdate_range(end=pd.Timestamp(end_date), periods=lookback_days)
 
-    # Market index path (KOSPI): regime-switching drift
+    # Market index path (KOSPI): three regimes — early choppy, mid uptrend, late strong
+    # so the *current* (last day) regime is clearly Risk-On / Strong Risk-On.
     n = len(dates)
-    drift = np.concatenate([
-        rng.normal(0.0006, 0.011, n // 2),       # mild uptrend
-        rng.normal(-0.0002, 0.018, n - n // 2),  # choppy/down
-    ])
-    rng.shuffle(drift)
-    kospi_returns = drift
+    n_early = int(n * 0.35)
+    n_mid = int(n * 0.40)
+    n_late = n - n_early - n_mid
+    drift_early = rng.normal(-0.0001, 0.014, n_early)
+    drift_mid = rng.normal(0.0008, 0.011, n_mid)
+    drift_late = rng.normal(0.0014, 0.009, n_late)  # strong recent uptrend
+    kospi_returns = np.concatenate([drift_early, drift_mid, drift_late])
     kospi_close = 2500 * np.exp(np.cumsum(kospi_returns))
     kosdaq_close = 850 * np.exp(np.cumsum(kospi_returns * 1.3 + rng.normal(0, 0.004, n)))
-    vkospi = 18 + 8 * np.abs(rng.normal(0, 1, n)) + 6 * (drift < -0.01)
+    # VKOSPI: low in recent uptrend (Risk-On signal)
+    vkospi = 17 + 6 * np.abs(rng.normal(0, 1, n)) + 8 * (kospi_returns < -0.01)
+    vkospi[-n_late:] = np.clip(vkospi[-n_late:] * 0.7, 12, 20)
 
     index_df = pd.DataFrame({
         "date": dates,
