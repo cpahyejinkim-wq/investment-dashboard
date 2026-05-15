@@ -32,6 +32,14 @@ except Exception:  # pragma: no cover
     pykrx_stock = None  # type: ignore[assignment]
     _HAS_PYKRX = False
 
+try:  # pragma: no cover - optional dependency
+    import FinanceDataReader as fdr  # type: ignore[import-not-found]
+
+    _HAS_FDR = True
+except Exception:  # pragma: no cover
+    fdr = None  # type: ignore[assignment]
+    _HAS_FDR = False
+
 
 @dataclass(frozen=True)
 class CollectorResult:
@@ -50,6 +58,139 @@ SECTORS_KOSDAQ = [
     "바이오", "2차전지", "반도체", "엔터", "게임", "소프트웨어",
     "의료기기", "신재생에너지", "로봇", "AI",
 ]
+
+
+def _try_fdr(end_date: date, lookback_days: int) -> CollectorResult | None:
+    """FinanceDataReader 기반 실데이터 수집. pykrx 인증 이슈 우회용 primary 경로."""
+    if not _HAS_FDR:
+        logger.info("FinanceDataReader not installed; skipping FDR path")
+        return None
+    try:
+        from kap.config import UNIVERSE
+
+        t0 = time.time()
+        logger.info("Fetching KRX stock listing via FinanceDataReader…")
+        listing = fdr.StockListing("KRX")  # type: ignore[union-attr]
+        # 컬럼 정규화 (FDR 버전별 차이 흡수)
+        col_map = {
+            "Code": "ticker", "Symbol": "ticker", "종목코드": "ticker",
+            "Name": "name", "종목명": "name",
+            "Market": "market", "시장": "market",
+            "MarketCap": "market_cap", "Marcap": "market_cap", "시가총액": "market_cap",
+            "Stocks": "shares", "상장주식수": "shares",
+        }
+        listing = listing.rename(columns={k: v for k, v in col_map.items() if k in listing.columns})
+        # ticker는 6자리 zero-padded string로 통일
+        listing["ticker"] = listing["ticker"].astype(str).str.zfill(6)
+        # 시장 필터 (KOSPI/KOSDAQ만)
+        listing = listing[listing["market"].isin(["KOSPI", "KOSDAQ"])].copy()
+        if "market_cap" not in listing.columns:
+            logger.warning("FDR listing has no market_cap column; cannot filter universe")
+            return None
+        listing["market_cap"] = pd.to_numeric(listing["market_cap"], errors="coerce")
+        listing = listing.dropna(subset=["market_cap"])
+
+        # 유니버스 필터 (시총 + 상위 N)
+        min_kp = int(UNIVERSE["min_market_cap_kospi"])
+        min_kd = int(UNIVERSE["min_market_cap_kosdaq"])
+        mask = (
+            ((listing["market"] == "KOSPI") & (listing["market_cap"] >= min_kp))
+            | ((listing["market"] == "KOSDAQ") & (listing["market_cap"] >= min_kd))
+        )
+        eligible = listing[mask].sort_values("market_cap", ascending=False)
+        max_universe = int(DATA_FETCH.get("pykrx_max_universe", 200))  # type: ignore[union-attr]
+        eligible = eligible.head(max_universe).reset_index(drop=True)
+        logger.info(
+            "FDR listing: {} rows total, {} eligible after cap filter (top {} kept)",
+            len(listing), int(mask.sum()), len(eligible),
+        )
+
+        # OHLCV 수집 (per-ticker)
+        start_str = (end_date - timedelta(days=int(lookback_days * 1.7))).strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        ohlcv_frames: list[pd.DataFrame] = []
+        n_total = len(eligible)
+        t_ohlcv = time.time()
+        for i, row in enumerate(eligible.itertuples(), start=1):
+            tk = getattr(row, "ticker")
+            try:
+                df = fdr.DataReader(tk, start_str, end_str)  # type: ignore[union-attr]
+            except Exception as e:
+                logger.debug("FDR DataReader failed for {}: {}", tk, e)
+                continue
+            if df is None or df.empty:
+                continue
+            df = df.reset_index()
+            df.columns = [str(c) for c in df.columns]
+            # FDR 응답 컬럼 정규화
+            df = df.rename(columns={
+                "Date": "date", "Open": "open", "High": "high", "Low": "low",
+                "Close": "close", "Volume": "volume", "Change": "change",
+            })
+            df["date"] = pd.to_datetime(df["date"])
+            df["ticker"] = tk
+            df["market"] = row.market
+            df["trade_value"] = df["volume"].astype(float) * df["close"].astype(float)
+            shares = int(getattr(row, "shares", 0) or 0)
+            if shares == 0:
+                # market_cap / close로 역산
+                shares = int(float(row.market_cap) / float(df["close"].iloc[-1])) if len(df) else 0
+            df["shares"] = shares
+            df["market_cap"] = df["close"].astype(float) * shares
+            ohlcv_frames.append(df[["ticker", "date", "market", "open", "high", "low",
+                                     "close", "volume", "trade_value", "market_cap", "shares"]])
+            if i % 25 == 0 or i == n_total:
+                elapsed = time.time() - t_ohlcv
+                remaining = elapsed / i * (n_total - i)
+                logger.info("  OHLCV progress (FDR): {}/{} ({:.0f}%, {:.1f}s, ~{:.0f}s remaining)",
+                            i, n_total, i / n_total * 100, elapsed, remaining)
+        if not ohlcv_frames:
+            logger.warning("FDR returned no OHLCV — falling back further")
+            return None
+        ohlcv = pd.concat(ohlcv_frames, ignore_index=True)
+        logger.info("FDR OHLCV combined: {:,} rows, elapsed={:.1f}s",
+                    len(ohlcv), time.time() - t_ohlcv)
+
+        # 지수 (KOSPI=KS11, KOSDAQ=KQ11)
+        logger.info("Fetching index history via FDR…")
+        kospi_idx = fdr.DataReader("KS11", start_str, end_str)  # type: ignore[union-attr]
+        kosdaq_idx = fdr.DataReader("KQ11", start_str, end_str)  # type: ignore[union-attr]
+        idx_df = pd.DataFrame({
+            "date": pd.to_datetime(kospi_idx.index),
+            "kospi_close": kospi_idx["Close"].values,
+            "kosdaq_close": kosdaq_idx["Close"].reindex(kospi_idx.index).ffill().values,
+            "vkospi": 20.0,  # FDR엔 VKOSPI가 없어 안전 디폴트 (Regime 계산에는 영향 적음)
+        })
+
+        # 메타데이터
+        metadata = pd.DataFrame({
+            "ticker": eligible["ticker"].values,
+            "name": eligible["name"].astype(str).values,
+            "market": eligible["market"].values,
+            "sector": "기타",  # FDR도 안정적 섹터 매핑 미제공 → Stage 2 보강
+            "listing_date": [pd.Timestamp(end_date) - pd.Timedelta(days=365 * 5)
+                              for _ in range(len(eligible))],
+        })
+
+        # Flow zero-fill (Stage 1)
+        flow_dates = sorted(ohlcv["date"].unique())
+        flow_rows = []
+        for tk in metadata["ticker"]:
+            for d in flow_dates:
+                flow_rows.append({
+                    "ticker": tk, "date": d,
+                    "foreign_net_buy": 0.0, "foreign_holding": 0.15,
+                    "inst_net_buy": 0.0, "individual_net_buy": 0.0,
+                })
+        flow = pd.DataFrame(flow_rows)
+
+        logger.info("FDR collection complete: source=fdr, total_elapsed={:.1f}s",
+                    time.time() - t0)
+        return CollectorResult(ohlcv=ohlcv, flow=flow, index=idx_df,
+                                metadata=metadata, source="fdr")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("FDR collection failed: {} — trying next source", exc)
+        return None
 
 
 def _nearest_trading_day_str(end_date: date) -> str:
@@ -368,7 +509,7 @@ def _cache_is_fresh() -> bool:
     src_file = PROCESSED_DIR / ".source"
     if src_file.exists() and bool(DATA_FETCH.get("prefer_pykrx", True)):
         src = src_file.read_text(encoding="utf-8").strip()
-        if src != "pykrx":
+        if src not in ("pykrx", "fdr"):
             logger.info("Cached data is '{}' but prefer_pykrx=True → will re-fetch", src)
             return False
     import os
@@ -401,11 +542,16 @@ def collect(
 
     prefer_pykrx = bool(DATA_FETCH.get("prefer_pykrx", True))
     result: CollectorResult | None = None
+    # 1순위: FinanceDataReader (KRX 인증 불필요, Naver Finance 경유)
     if prefer_pykrx:
+        result = _try_fdr(end_date, lookback_days)
+    # 2순위: pykrx (인증 환경변수 설정된 경우)
+    if result is None and prefer_pykrx:
         result = _try_pykrx(end_date, lookback_days)
+    # 3순위: 합성 데이터 (네트워크 차단 환경 대비)
     if result is None:
         if not bool(DATA_FETCH["use_synthetic_fallback"]):
-            raise RuntimeError("pykrx collection failed and synthetic fallback is disabled")
+            raise RuntimeError("Real data collection failed and synthetic fallback is disabled")
         result = _synthetic_dataset(end_date, lookback_days)
 
     logger.info("Data collection complete: source={}, elapsed={:.1f}s", result.source, time.time() - t0)

@@ -25,9 +25,9 @@ Built per `KOSPI_Audition_Pyramid_v2_1_PRD.docx`.
 ## Run
 
 ```bash
-pip install pandas numpy pyarrow loguru duckdb pykrx pytest
+pip install pandas numpy pyarrow loguru duckdb finance-datareader pykrx pytest
 
-# 첫 실행 — pykrx로 실데이터 수집 (~2-3분)
+# 첫 실행 — FinanceDataReader로 실데이터 수집 (~2-3분)
 python scripts/run_analysis.py --refresh
 
 # 그 다음부터는 캐시 사용 (~5초)
